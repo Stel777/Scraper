@@ -473,6 +473,30 @@ body {
 .map-type-btn:hover { background: #f1f5f9; }
 .map-type-btn.active { background: #2563eb; color: #fff; }
 
+/* ── Preview Fullscreen ── */
+#preview-section.fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: #fff;
+    padding: 20px;
+    margin: 0;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+#preview-section.fullscreen .table-wrap {
+    flex: 1;
+    max-height: none;
+    border-radius: 4px;
+}
+#preview-section.fullscreen #results-table td {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
