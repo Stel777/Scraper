@@ -640,6 +640,89 @@ function renderStep3() {
     renderFieldsList();
     updateExportSizes();
     renderTable();
+    updateEnrichButton();
+}
+
+function hasIncompleteData(b) {
+    return b.latitude && b.longitude && (
+        !b.website || !b.phone || !b.email || !b.opening_hours
+    );
+}
+
+function updateEnrichButton() {
+    const missing = state.businesses.filter(hasIncompleteData);
+    const section = document.getElementById('enrich-section');
+    const btn     = document.getElementById('btn-enrich');
+    if (missing.length > 0) {
+        section.classList.remove('hidden');
+        btn.textContent = `🔍 Fill Missing Data (${missing.length})`;
+        btn.disabled = false;
+        document.getElementById('enrich-status').textContent = '';
+    } else {
+        section.classList.add('hidden');
+    }
+}
+
+// ── Data Enrichment ───────────────────────────────────────
+async function enrichMissingWebsites() {
+    const missing = state.businesses.filter(hasIncompleteData);
+    if (!missing.length) return;
+
+    const btn    = document.getElementById('btn-enrich');
+    const status = document.getElementById('enrich-status');
+    btn.disabled = true;
+    let enriched = 0;
+
+    for (let i = 0; i < missing.length; i++) {
+        const b = missing[i];
+        status.textContent = `Checking ${i + 1} of ${missing.length}…`;
+
+        try {
+            const params = new URLSearchParams({
+                lat: b.latitude, lon: b.longitude,
+                format: 'jsonv2', extratags: 1, zoom: 18,
+            });
+            const resp = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?${params}`,
+                { headers: { 'Accept-Language': 'en' } }
+            );
+            if (resp.ok) {
+                const data = await resp.json();
+                const resultName = (data.name || data.display_name?.split(',')[0] || '').toLowerCase().trim();
+                const ourName    = (b.name || '').toLowerCase().trim();
+                if (ourName && resultName && (resultName.includes(ourName) || ourName.includes(resultName))) {
+                    const tags = data.extratags || {};
+                    let filled = false;
+                    const tryFill = (field, ...keys) => {
+                        if (b[field]) return;
+                        for (const k of keys) {
+                            if (tags[k]) { b[field] = tags[k]; filled = true; return; }
+                        }
+                    };
+                    tryFill('website',       'website',       'contact:website');
+                    tryFill('phone',         'phone',         'contact:phone');
+                    tryFill('email',         'email',         'contact:email');
+                    tryFill('opening_hours', 'opening_hours');
+                    if (filled) enriched++;
+                }
+            }
+        } catch {}
+
+        // Nominatim rate limit: 1 req/sec
+        if (i < missing.length - 1) await new Promise(r => setTimeout(r, 1100));
+    }
+
+    const remaining = state.businesses.filter(hasIncompleteData);
+    status.textContent = enriched > 0
+        ? `✓ Filled data for ${enriched} business${enriched !== 1 ? 'es' : ''}!`
+        : 'No new data found.';
+    btn.textContent = remaining.length > 0
+        ? `🔍 Fill Missing Data (${remaining.length})`
+        : '✓ All checked';
+    btn.disabled = remaining.length === 0;
+
+    renderTable();
+    updateExportSizes();
 }
 
 function renderFieldsList() {

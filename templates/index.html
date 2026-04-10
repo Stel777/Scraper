@@ -140,6 +140,16 @@
 
         <div id="results-summary" class="summary-card"></div>
 
+        <div id="enrich-section" class="section hidden">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <button class="btn-secondary" id="btn-enrich" onclick="enrichMissingWebsites()">
+                    🔍 Fill Missing Data
+                </button>
+                <span id="enrich-status" class="muted" style="font-size:0.85rem"></span>
+            </div>
+            <p class="hint">Looks up each business individually to fill in missing website, phone, email, and hours.</p>
+        </div>
+
         <div class="section">
             <div class="section-header">
                 <h3 class="section-title">Fields to export</h3>
