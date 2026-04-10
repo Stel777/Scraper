@@ -177,6 +177,11 @@
                 <span id="preview-count" class="muted"></span>
                 <button class="link-btn" id="btn-fullscreen" onclick="toggleFullscreen()" style="margin-left:8px">Fullscreen</button>
             </div>
+            <div id="preview-fs-bar">
+                <button class="btn-secondary" id="btn-enrich-fs" onclick="enrichMissingWebsites()">🔍 Fill Missing Data</button>
+                <span id="enrich-status-fs" class="muted"></span>
+                <button class="btn-secondary" style="margin-left:auto" onclick="toggleFullscreen()">✕ Minimize</button>
+            </div>
             <div class="table-wrap" id="preview-table-wrap">
                 <table id="results-table">
                     <thead id="results-thead"></thead>

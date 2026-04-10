@@ -649,18 +649,35 @@ function hasIncompleteData(b) {
     );
 }
 
+function setEnrichStatus(text) {
+    ['enrich-status', 'enrich-status-fs'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = text; el.classList.remove('hidden'); }
+    });
+}
+
+function setEnrichButtons(label, disabled, hide) {
+    ['btn-enrich', 'btn-enrich-fs'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = label;
+        el.disabled = disabled;
+        if (hide) el.classList.add('hidden');
+        else el.classList.remove('hidden');
+    });
+}
+
 function updateEnrichButton() {
     const missing = state.businesses.filter(hasIncompleteData);
-    const btn    = document.getElementById('btn-enrich');
-    const status = document.getElementById('enrich-status');
     if (missing.length > 0) {
-        btn.classList.remove('hidden');
-        btn.textContent = `🔍 Fill Missing Data (${missing.length})`;
-        btn.disabled = false;
-        status.textContent = '';
-        status.classList.add('hidden');
+        setEnrichButtons(`🔍 Fill Missing Data (${missing.length})`, false, false);
+        ['enrich-status', 'enrich-status-fs'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { el.textContent = ''; }
+        });
+        document.getElementById('enrich-status').classList.add('hidden');
     } else {
-        btn.classList.add('hidden');
+        document.getElementById('btn-enrich').classList.add('hidden');
     }
 }
 
@@ -672,19 +689,49 @@ function toggleFullscreen() {
     btnFS.textContent = isFS ? 'Minimize' : 'Fullscreen';
 }
 
+// ── Real-time cell helpers ───────────────────────────────
+function markCellsLoading(busIdx, fields) {
+    const row = document.querySelector(`#results-tbody tr[data-idx="${busIdx}"]`);
+    if (!row) return;
+    for (const f of fields) {
+        const cell = row.querySelector(`td[data-field="${f}"]`);
+        if (cell && !cell.textContent.trim())
+            cell.innerHTML = '<span class="cell-spinner"></span>';
+    }
+}
+
+function updateTableCell(busIdx, field, value) {
+    const row = document.querySelector(`#results-tbody tr[data-idx="${busIdx}"]`);
+    if (!row) return;
+    const cell = row.querySelector(`td[data-field="${field}"]`);
+    if (!cell) return;
+    cell.classList.remove('cell-filled');
+    cell.innerHTML = escHtml(value);
+    cell.title = value;
+    if (value) {
+        // Force reflow so animation restarts
+        void cell.offsetWidth;
+        cell.classList.add('cell-filled');
+    }
+}
+
 // ── Data Enrichment ───────────────────────────────────────
 async function enrichMissingWebsites() {
     const missing = state.businesses.filter(hasIncompleteData);
     if (!missing.length) return;
 
-    const btn    = document.getElementById('btn-enrich');
-    const status = document.getElementById('enrich-status');
-    btn.disabled = true;
+    setEnrichButtons('Checking…', true, false);
     let enriched = 0;
 
     for (let i = 0; i < missing.length; i++) {
-        const b = missing[i];
-        status.textContent = `Checking ${i + 1} of ${missing.length}…`;
+        const b      = missing[i];
+        const busIdx = state.businesses.indexOf(b);
+
+        setEnrichStatus(`Checking ${i + 1} of ${missing.length}…`);
+
+        // Show spinners for empty fields in the table row
+        const emptyFields = ['website', 'phone', 'email', 'opening_hours'].filter(f => !b[f]);
+        markCellsLoading(busIdx, emptyFields);
 
         try {
             const params = new URLSearchParams({
@@ -697,42 +744,52 @@ async function enrichMissingWebsites() {
             );
             if (resp.ok) {
                 const data = await resp.json();
-                const resultName = (data.name || data.display_name?.split(',')[0] || '').toLowerCase().trim();
-                const ourName    = (b.name || '').toLowerCase().trim();
-                if (ourName && resultName && (resultName.includes(ourName) || ourName.includes(resultName))) {
-                    const tags = data.extratags || {};
-                    let filled = false;
-                    const tryFill = (field, ...keys) => {
-                        if (b[field]) return;
-                        for (const k of keys) {
-                            if (tags[k]) { b[field] = tags[k]; filled = true; return; }
+                const tags = data.extratags || {};
+                let filledAny = false;
+
+                const tryFill = (field, ...keys) => {
+                    if (b[field]) return;
+                    for (const k of keys) {
+                        if (tags[k]) {
+                            b[field] = tags[k];
+                            updateTableCell(busIdx, field, tags[k]);
+                            filledAny = true;
+                            return;
                         }
-                    };
-                    tryFill('website',       'website',       'contact:website');
-                    tryFill('phone',         'phone',         'contact:phone');
-                    tryFill('email',         'email',         'contact:email');
-                    tryFill('opening_hours', 'opening_hours');
-                    if (filled) enriched++;
-                }
+                    }
+                    // Clear spinner — nothing found for this field
+                    updateTableCell(busIdx, field, '');
+                };
+
+                tryFill('website',       'website',       'contact:website');
+                tryFill('phone',         'phone',         'contact:phone');
+                tryFill('email',         'email',         'contact:email');
+                tryFill('opening_hours', 'opening_hours');
+                if (filledAny) enriched++;
+            } else {
+                emptyFields.forEach(f => updateTableCell(busIdx, f, ''));
             }
-        } catch {}
+        } catch {
+            emptyFields.forEach(f => updateTableCell(busIdx, f, ''));
+        }
 
         // Nominatim rate limit: 1 req/sec
         if (i < missing.length - 1) await new Promise(r => setTimeout(r, 1100));
     }
 
     const remaining = state.businesses.filter(hasIncompleteData);
-    status.textContent = enriched > 0
+    const summary = enriched > 0
         ? `✓ Filled data for ${enriched} business${enriched !== 1 ? 'es' : ''}!`
         : 'No new data found.';
-    status.classList.remove('hidden');
-    btn.textContent = remaining.length > 0
-        ? `🔍 Fill Missing Data (${remaining.length})`
-        : '✓ All checked';
-    btn.disabled = remaining.length === 0;
-    if (remaining.length === 0) btn.classList.add('hidden');
+    setEnrichStatus(summary);
 
-    renderTable();
+    if (remaining.length > 0) {
+        setEnrichButtons(`🔍 Fill Missing Data (${remaining.length})`, false, false);
+    } else {
+        document.getElementById('btn-enrich').classList.add('hidden');
+        document.getElementById('btn-enrich-fs').classList.add('hidden');
+    }
+
     updateExportSizes();
 }
 
@@ -805,9 +862,9 @@ function renderTable() {
         '<tr>' + fields.map(f => `<th>${FIELD_LABELS[f] || f}</th>`).join('') + '</tr>';
 
     document.getElementById('results-tbody').innerHTML =
-        shown.map(b =>
-            '<tr>' + fields.map(f =>
-                `<td title="${escHtml(String(b[f] || ''))}">${escHtml(String(b[f] || ''))}</td>`
+        shown.map((b, i) =>
+            `<tr data-idx="${i}">` + fields.map(f =>
+                `<td data-field="${f}" title="${escHtml(String(b[f] || ''))}">${escHtml(String(b[f] || ''))}</td>`
             ).join('') + '</tr>'
         ).join('');
 }
