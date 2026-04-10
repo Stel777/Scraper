@@ -1,15 +1,58 @@
-// ── State ──────────────────────────────────────────────
-const state = {
-    step: 1,
-    areaType: null,      // 'polygon' | 'bbox'
-    areaData: null,      // [[lat,lng], ...] | [s, n, w, e]
-    areaName: '',
-    businessKey: null,
-    customValue: null,   // used when businessKey === 'other'
-    businesses: [],
-    selectedFields: ['name', 'address', 'phone', 'website', 'opening_hours'],
+// ── Business Types ──────────────────────────────────────
+const BUSINESS_TYPES_DATA = {
+    restaurant:  { tags: [["amenity","restaurant"]], label: "Restaurant" },
+    cafe:        { tags: [["amenity","cafe"]], label: "Cafe" },
+    bar:         { tags: [["amenity","bar"],["amenity","pub"]], label: "Bar / Pub" },
+    fast_food:   { tags: [["amenity","fast_food"]], label: "Fast Food" },
+    sushi:       { tags: [["amenity","restaurant"],["amenity","fast_food"]], cuisine: "sushi", label: "Sushi" },
+    pizza:       { tags: [["amenity","restaurant"],["amenity","fast_food"]], cuisine: "pizza", label: "Pizza" },
+    burger:      { tags: [["amenity","fast_food"]], cuisine: "burger", label: "Burger" },
+    bakery:      { tags: [["shop","bakery"]], label: "Bakery" },
+    gym:         { tags: [["leisure","fitness_centre"],["leisure","sports_centre"],["amenity","gym"]], label: "Gym / Fitness" },
+    pharmacy:    { tags: [["amenity","pharmacy"],["healthcare","pharmacy"]], label: "Pharmacy" },
+    dentist:     { tags: [["amenity","dentist"],["healthcare","dentist"]], label: "Dentist" },
+    hospital:    { tags: [["amenity","hospital"],["amenity","clinic"],["healthcare","hospital"],["healthcare","clinic"]], label: "Hospital / Clinic" },
+    beauty:      { tags: [["shop","beauty"],["shop","cosmetics"]], label: "Beauty Salon" },
+    hairdresser: { tags: [["shop","hairdresser"]], label: "Hairdresser" },
+    barber:      { tags: [["shop","barber"]], label: "Barber" },
+    supermarket: { tags: [["shop","supermarket"],["shop","convenience"]], label: "Supermarket" },
+    clothes:     { tags: [["shop","clothes"],["shop","fashion"]], label: "Clothes Shop" },
+    electronics: { tags: [["shop","electronics"],["shop","computer"],["shop","mobile_phone"]], label: "Electronics" },
+    bank:        { tags: [["amenity","bank"]], label: "Bank" },
+    hotel:       { tags: [["tourism","hotel"],["tourism","hostel"],["tourism","guest_house"],["tourism","motel"]], label: "Hotel / Hostel" },
+    fuel:        { tags: [["amenity","fuel"]], label: "Gas Station" },
+    school:      { tags: [["amenity","school"],["amenity","college"],["amenity","university"]], label: "School" },
+    cinema:      { tags: [["amenity","cinema"]], label: "Cinema" },
+    nightclub:   { tags: [["amenity","nightclub"],["amenity","music_venue"]], label: "Nightclub" },
+    atm:         { tags: [["amenity","atm"],["atm","yes"]], label: "ATM" },
+    laundry:     { tags: [["shop","laundry"],["shop","dry_cleaning"]], label: "Laundry" },
+    books:       { tags: [["shop","books"]], label: "Bookshop" },
+    florist:     { tags: [["shop","florist"]], label: "Florist" },
+    optician:    { tags: [["shop","optician"]], label: "Optician" },
+    veterinary:  { tags: [["amenity","veterinary"]], label: "Veterinary" },
+    car_repair:  { tags: [["shop","car_repair"]], label: "Car Repair" },
+    jewelry:     { tags: [["shop","jewelry"]], label: "Jewelry" },
+    pet_shop:    { tags: [["shop","pet"],["shop","pet_supplies"],["shop","pets"],["shop","pet_shop"]], label: "Pet Shop" },
+    car_wash:    { tags: [["amenity","car_wash"]], label: "Car Wash" },
+    post_office: { tags: [["amenity","post_office"]], label: "Post Office" },
+    parking:     { tags: [["amenity","parking"],["amenity","parking_space"]], label: "Parking" },
+    ice_cream:   { tags: [["amenity","ice_cream"],["shop","ice_cream"]], label: "Ice Cream" },
+    hardware:    { tags: [["shop","hardware"],["shop","doityourself"]], label: "Hardware Store" },
+    bicycle:     { tags: [["shop","bicycle"]], label: "Bicycle Shop" },
+    alcohol:     { tags: [["shop","wine"],["shop","alcohol"],["shop","beverages"]], label: "Wine / Alcohol" },
+    travel:      { tags: [["shop","travel_agency"],["tourism","information"]], label: "Travel Agency" },
+    massage:     { tags: [["shop","massage"],["amenity","spa"]], label: "Massage / Spa" },
+    toys:        { tags: [["shop","toys"]], label: "Toy Shop" },
+    sports_shop: { tags: [["shop","sports"],["shop","outdoor"]], label: "Sports Shop" },
+    tattoo:      { tags: [["shop","tattoo"],["shop","piercing"]], label: "Tattoo / Piercing" },
+    photography: { tags: [["shop","photo"],["shop","photography"]], label: "Photography" },
+    music_shop:  { tags: [["shop","musical_instrument"],["shop","music"]], label: "Music Shop" },
+    swimming:    { tags: [["leisure","swimming_pool"],["sport","swimming"],["amenity","public_bath"]], label: "Swimming Pool" },
+    park:        { tags: [["leisure","park"],["leisure","garden"],["leisure","nature_reserve"]], label: "Park / Garden" },
+    playground:  { tags: [["leisure","playground"]], label: "Playground" },
 };
 
+// ── Field Labels ────────────────────────────────────────
 const FIELD_LABELS = {
     name:          'Business Name',
     address:       'Address',
@@ -23,6 +66,7 @@ const FIELD_LABELS = {
     longitude:     'Longitude',
 };
 
+// ── Icons ───────────────────────────────────────────────
 const BUSINESS_ICONS = {
     restaurant:  '🍽️', cafe:        '☕',  bar:         '🍺',
     fast_food:   '🍔', sushi:       '🍣',  pizza:       '🍕',
@@ -34,14 +78,159 @@ const BUSINESS_ICONS = {
     cinema:      '🎬', nightclub:   '🎵',  atm:         '💳',
     laundry:     '🧺', books:       '📚',  florist:     '🌸',
     optician:    '👓', veterinary:  '🐾',  car_repair:  '🔧',
-    jewelry:     '💍', barber:      '💈', pet_shop:    '🐶',  car_wash:    '🚿',
-    post_office: '📮', parking:     '🅿️',  ice_cream:   '🍦',
-    hardware:    '🔨', bicycle:     '🚲',  alcohol:     '🍷',
-    travel:      '✈️', massage:     '💆',  toys:        '🧸',
-    sports_shop: '⚽', tattoo:      '🎨',  photography: '📷',
-    music_shop:  '🎸', swimming:    '🏊',  park:        '🌳',
-    playground:  '🛝',
+    jewelry:     '💍', barber:      '💈',  pet_shop:    '🐶',
+    car_wash:    '🚿', post_office: '📮',  parking:     '🅿️',
+    ice_cream:   '🍦', hardware:    '🔨',  bicycle:     '🚲',
+    alcohol:     '🍷', travel:      '✈️',  massage:     '💆',
+    toys:        '🧸', sports_shop: '⚽',  tattoo:      '🎨',
+    photography: '📷', music_shop:  '🎸',  swimming:    '🏊',
+    park:        '🌳', playground:  '🛝',
 };
+
+// ── State ───────────────────────────────────────────────
+const state = {
+    step: 1,
+    areaType: null,
+    areaData: null,
+    areaName: '',
+    businessKey: null,
+    customValue: null,
+    businesses: [],
+    selectedFields: ['name', 'address', 'phone', 'website', 'opening_hours'],
+};
+
+// ── Overpass endpoints ──────────────────────────────────
+const OVERPASS_ENDPOINTS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass.openstreetmap.ru/api/interpreter',
+];
+
+// ── OSM Helpers ─────────────────────────────────────────
+function buildAddress(tags) {
+    const parts = [];
+    const street = tags['addr:street'] || '';
+    const house  = tags['addr:housenumber'] || '';
+    if (street) parts.push(`${street} ${house}`.trim());
+    if (tags['addr:city'])     parts.push(tags['addr:city']);
+    if (tags['addr:postcode']) parts.push(tags['addr:postcode']);
+    return parts.join(', ');
+}
+
+function parseElement(el) {
+    const tags = el.tags || {};
+    const lat  = el.lat ?? el.center?.lat ?? '';
+    const lon  = el.lon ?? el.center?.lon ?? '';
+    return {
+        name:          tags.name || '',
+        address:       buildAddress(tags),
+        phone:         tags.phone         || tags['contact:phone']   || '',
+        website:       tags.website       || tags['contact:website'] || '',
+        email:         tags.email         || tags['contact:email']   || '',
+        opening_hours: tags.opening_hours || '',
+        rating:        tags.stars         || tags.rating             || '',
+        cuisine:       tags.cuisine       || '',
+        latitude:      lat,
+        longitude:     lon,
+    };
+}
+
+function dedupKey(b) {
+    return `${(b.name || '').toLowerCase().trim()}|${Math.round((parseFloat(b.latitude)  || 0) * 10000)}|${Math.round((parseFloat(b.longitude) || 0) * 10000)}`;
+}
+
+// ── Overpass Query Builder ──────────────────────────────
+function buildOverpassQuery(businessKey, areaType, areaData, customValue) {
+    let areaFilter;
+    if (areaType === 'polygon') {
+        const polyStr = areaData.map(pt => `${pt[0]} ${pt[1]}`).join(' ');
+        areaFilter = `(poly:"${polyStr}")`;
+    } else {
+        const [s, n, w, e] = areaData;
+        areaFilter = `(${s},${w},${n},${e})`;
+    }
+
+    const parts = [];
+
+    if (businessKey === 'other') {
+        let tagPairs;
+        if (customValue.includes('=')) {
+            const idx = customValue.indexOf('=');
+            tagPairs = [[customValue.slice(0, idx).trim(), customValue.slice(idx + 1).trim()]];
+        } else {
+            const val = customValue.replace(/ /g, '_').toLowerCase();
+            tagPairs = [['amenity', val], ['shop', val], ['leisure', val], ['tourism', val]];
+        }
+        for (const [k, v] of tagPairs) {
+            parts.push(`node["${k}"="${v}"]${areaFilter};`);
+            parts.push(`way["${k}"="${v}"]${areaFilter};`);
+        }
+    } else {
+        const bt = BUSINESS_TYPES_DATA[businessKey];
+        const cuisine = bt.cuisine || null;
+        for (const [k, v] of bt.tags) {
+            const cf = cuisine ? `["cuisine"="${cuisine}"]` : '';
+            parts.push(`node["${k}"="${v}"]${cf}${areaFilter};`);
+            parts.push(`way["${k}"="${v}"]${cf}${areaFilter};`);
+        }
+    }
+
+    return `[out:json][timeout:90][maxsize:536870912];\n(\n  ${parts.join('\n  ')}\n);\nout center;`;
+}
+
+// ── Nominatim Secondary Search ──────────────────────────
+async function searchNominatimPois(label, areaType, areaData) {
+    let s, n, w, e;
+    if (areaType === 'bbox') {
+        [s, n, w, e] = areaData;
+    } else {
+        const lats = areaData.map(pt => pt[0]);
+        const lons = areaData.map(pt => pt[1]);
+        s = Math.min(...lats); n = Math.max(...lats);
+        w = Math.min(...lons); e = Math.max(...lons);
+    }
+
+    try {
+        const params = new URLSearchParams({
+            q: label, format: 'jsonv2', limit: 50,
+            bounded: 1, viewbox: `${w},${n},${e},${s}`,
+            addressdetails: 1, extratags: 1,
+        });
+        const resp = await fetch(
+            `https://nominatim.openstreetmap.org/search?${params}`,
+            { headers: { 'Accept-Language': 'en' } }
+        );
+        if (!resp.ok) return [];
+        const results = await resp.json();
+
+        return results.map(r => {
+            const tags = r.extratags || {};
+            const addr = r.address   || {};
+            const parts = [];
+            const road  = addr.road || '';
+            const house = addr.house_number || '';
+            if (road) parts.push(`${road} ${house}`.trim());
+            const city = addr.city || addr.town || addr.village || '';
+            if (city) parts.push(city);
+            if (addr.postcode) parts.push(addr.postcode);
+            return {
+                name:          r.name || r.display_name.split(',')[0].trim(),
+                address:       parts.join(', '),
+                phone:         tags.phone         || tags['contact:phone']   || '',
+                website:       tags.website       || tags['contact:website'] || '',
+                email:         tags.email         || tags['contact:email']   || '',
+                opening_hours: tags.opening_hours || '',
+                rating:        tags.stars         || tags.rating             || '',
+                cuisine:       tags.cuisine       || '',
+                latitude:      parseFloat(r.lat),
+                longitude:     parseFloat(r.lon),
+            };
+        });
+    } catch {
+        return [];
+    }
+}
 
 // ── Map ─────────────────────────────────────────────────
 let map, drawnItems, bboxRect, polygonHandler, rectangleHandler;
@@ -65,7 +254,6 @@ function initMap() {
 
     drawnItems = new L.FeatureGroup().addTo(map);
 
-    // Init draw handlers (no toolbar shown — we use our own buttons)
     const polyOpts  = { color: '#2563eb', weight: 2, fillOpacity: 0.1 };
     polygonHandler   = new L.Draw.Polygon(map,   { shapeOptions: polyOpts });
     rectangleHandler = new L.Draw.Rectangle(map, { shapeOptions: polyOpts });
@@ -75,7 +263,6 @@ function initMap() {
         drawnItems.addLayer(e.layer);
 
         let latlngs = e.layer.getLatLngs();
-        // Polygon/rectangle returns [[LatLng, ...]]
         if (Array.isArray(latlngs[0])) latlngs = latlngs[0];
 
         state.areaType = 'polygon';
@@ -88,6 +275,21 @@ function initMap() {
 
         setAreaSelected(true, 'Area drawn on map');
     });
+}
+
+// ── Map type ─────────────────────────────────────────────
+function setMapType(type) {
+    if (type === currentMapType) return;
+    currentMapType = type;
+    if (type === 'satellite') {
+        map.removeLayer(streetLayer);
+        satelliteLayer.addTo(map);
+    } else {
+        map.removeLayer(satelliteLayer);
+        streetLayer.addTo(map);
+    }
+    document.getElementById('btn-map-street').classList.toggle('active', type === 'street');
+    document.getElementById('btn-map-satellite').classList.toggle('active', type === 'satellite');
 }
 
 // ── Draw controls ───────────────────────────────────────
@@ -133,24 +335,30 @@ async function geocodeCity() {
     resultsDiv.innerHTML = '<div class="hint" style="padding:4px 0">Searching…</div>';
 
     try {
-        const resp = await fetch('/api/geocode', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ city }),
-        });
+        const params = new URLSearchParams({ q: city, format: 'json', limit: 5 });
+        const resp = await fetch(
+            `https://nominatim.openstreetmap.org/search?${params}`,
+            { headers: { 'Accept-Language': 'en' } }
+        );
         const data = await resp.json();
 
-        if (data.error) {
-            resultsDiv.innerHTML = `<div class="badge error">${data.error}</div>`;
+        if (!data.length) {
+            resultsDiv.innerHTML = '<div class="badge error">Location not found</div>';
             return;
         }
 
         resultsDiv.innerHTML = '';
-        data.results.forEach(r => {
+        data.forEach(r => {
+            const result = {
+                display_name: r.display_name,
+                lat: parseFloat(r.lat),
+                lon: parseFloat(r.lon),
+                bbox: r.boundingbox.map(Number), // [south, north, west, east]
+            };
             const div = document.createElement('div');
             div.className = 'suggestion-item';
             div.textContent = r.display_name;
-            div.onclick = () => selectCity(r);
+            div.onclick = () => selectCity(result);
             resultsDiv.appendChild(div);
         });
     } catch {
@@ -162,7 +370,6 @@ function selectCity(result) {
     if (bboxRect) { map.removeLayer(bboxRect); bboxRect = null; }
     drawnItems.clearLayers();
 
-    // Nominatim bbox: [south, north, west, east]
     const [s, n, w, e] = result.bbox;
 
     bboxRect = L.rectangle([[s, w], [n, e]], {
@@ -201,11 +408,10 @@ function goToStep(step) {
     state.step = step;
     document.getElementById(`step-${step}`).classList.add('active');
 
-    // Update dots
     for (let i = 1; i <= 3; i++) {
         const dot = document.getElementById(`dot-${i}`);
         dot.classList.remove('active', 'done');
-        if (i < step)      dot.classList.add('done');
+        if (i < step)       dot.classList.add('done');
         else if (i === step) dot.classList.add('active');
     }
     document.getElementById('line-12').classList.toggle('done', step > 1);
@@ -231,7 +437,6 @@ function renderTypeGrid(filter) {
         grid.appendChild(btn);
     });
 
-    // "Other" button always at the end (hidden when filter active)
     if (!lower) {
         const btn = document.createElement('button');
         btn.className = 'type-btn' + (state.businessKey === 'other' ? ' selected' : '');
@@ -306,7 +511,7 @@ function startProgress() {
     });
 
     function tick() {
-        const elapsed  = Date.now() - _progressStart;
+        const elapsed   = Date.now() - _progressStart;
         const remaining = Math.max(0, Math.round((ESTIMATED_MS - elapsed) / 1000));
         eta.textContent = remaining > 0 ? `~${remaining}s` : 'Almost done...';
     }
@@ -335,27 +540,56 @@ async function searchBusinesses() {
     startProgress();
 
     try {
-        const resp = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                business_type: state.businessKey,
-                area_type:     state.areaType,
-                area_data:     state.areaData,
-                custom_value:  state.customValue || '',
-            }),
-        });
-        const data = await resp.json();
+        const query = buildOverpassQuery(state.businessKey, state.areaType, state.areaData, state.customValue);
 
-        if (data.error) {
-            errorDiv.textContent = data.error;
+        // Try Overpass endpoints in order
+        let overpassElements = [];
+        for (const endpoint of OVERPASS_ENDPOINTS) {
+            try {
+                const resp = await fetch(endpoint, {
+                    method: 'POST',
+                    body: query,
+                    signal: AbortSignal.timeout(95000),
+                });
+                if (!resp.ok) continue;
+                const data = await resp.json();
+                overpassElements = data.elements || [];
+                break;
+            } catch {
+                continue;
+            }
+        }
+
+        // Deduplicate Overpass results
+        const seen = new Set();
+        const businesses = [];
+
+        for (const el of overpassElements) {
+            const b = parseElement(el);
+            const k = dedupKey(b);
+            if (!seen.has(k)) { seen.add(k); businesses.push(b); }
+        }
+
+        // Secondary: Nominatim
+        const label = state.businessKey === 'other'
+            ? state.customValue
+            : (BUSINESS_TYPES_DATA[state.businessKey]?.label || '');
+
+        const nominatimResults = await searchNominatimPois(label, state.areaType, state.areaData);
+        for (const b of nominatimResults) {
+            const k = dedupKey(b);
+            if (!seen.has(k)) { seen.add(k); businesses.push(b); }
+        }
+
+        if (businesses.length === 0 && overpassElements.length === 0) {
+            errorDiv.textContent = 'All map data servers are currently busy. Please wait a moment and try again.';
             errorDiv.classList.remove('hidden');
             return;
         }
 
         stopProgress();
-        state.businesses = data.businesses;
-        placeMarkers(data.businesses);
+        state.businesses = businesses;
+        placeMarkers(businesses);
         goToStep(3);
 
     } catch {
@@ -398,7 +632,7 @@ function clearMarkers() {
 function renderStep3() {
     const count = state.businesses.length;
     const bt    = BUSINESS_TYPES_DATA[state.businessKey];
-    const label = bt ? bt.label.toLowerCase() : 'business';
+    const label = bt ? bt.label.toLowerCase() : (state.customValue || 'business');
 
     document.getElementById('results-summary').textContent =
         `Found ${count} ${label}${count !== 1 ? 'es' : ''} in ${state.areaName}`;
@@ -431,7 +665,7 @@ function renderFieldsList() {
         };
 
         const lbl = document.createElement('label');
-        lbl.htmlFor   = `field-${key}`;
+        lbl.htmlFor     = `field-${key}`;
         lbl.textContent = label;
 
         item.appendChild(cb);
@@ -452,7 +686,7 @@ function toggleAllFields(on) {
 function updateExportSizes() {
     const n = state.businesses.length;
     const f = state.selectedFields.length;
-    const avg = 20; // avg chars per field
+    const avg = 20;
 
     document.getElementById('size-csv').textContent  = fmt(n * f * avg + f * 15);
     document.getElementById('size-xlsx').textContent = fmt(n * f * 12 + 10240);
@@ -460,8 +694,8 @@ function updateExportSizes() {
 }
 
 function fmt(bytes) {
-    if (bytes < 1024)              return `~${bytes}B`;
-    if (bytes < 1024 * 1024)       return `~${Math.round(bytes / 1024)}KB`;
+    if (bytes < 1024)        return `~${bytes}B`;
+    if (bytes < 1024 * 1024) return `~${Math.round(bytes / 1024)}KB`;
     return `~${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
@@ -485,60 +719,55 @@ function renderTable() {
 }
 
 function escHtml(str) {
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ── Export ───────────────────────────────────────────────
-async function exportData(format) {
+function triggerDownload(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function exportData(format) {
     if (!state.businesses.length) return;
     if (!state.selectedFields.length) {
         alert('Please select at least one field to export.');
         return;
     }
 
-    try {
-        const resp = await fetch('/api/export', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                businesses: state.businesses,
-                fields:     state.selectedFields,
-                format,
-            }),
-        });
+    const fields  = state.selectedFields;
+    const headers = fields.map(f => FIELD_LABELS[f] || f);
+    const rows    = state.businesses.map(b => fields.map(f => String(b[f] || '')));
 
-        if (!resp.ok) {
-            alert('Export failed. Please try again.');
-            return;
-        }
-
-        const blob = await resp.blob();
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement('a');
-        a.href     = url;
-        a.download = `businesses.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    } catch {
-        alert('Export failed. Check your connection.');
+    if (format === 'csv') {
+        const lines = [headers, ...rows].map(row =>
+            row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(',')
+        );
+        triggerDownload('\uFEFF' + lines.join('\n'), 'businesses.csv', 'text/csv;charset=utf-8');
     }
-}
 
-// ── Map type ─────────────────────────────────────────────
-function setMapType(type) {
-    if (type === currentMapType) return;
-    currentMapType = type;
-    if (type === 'satellite') {
-        map.removeLayer(streetLayer);
-        satelliteLayer.addTo(map);
-    } else {
-        map.removeLayer(satelliteLayer);
-        streetLayer.addTo(map);
+    else if (format === 'txt') {
+        const lines = [headers, ...rows].map(row => row.join('\t'));
+        triggerDownload(lines.join('\n'), 'businesses.txt', 'text/plain;charset=utf-8');
     }
-    document.getElementById('btn-map-street').classList.toggle('active', type === 'street');
-    document.getElementById('btn-map-satellite').classList.toggle('active', type === 'satellite');
+
+    else if (format === 'xlsx') {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+        // Column widths
+        ws['!cols'] = headers.map((h, i) => ({
+            wch: Math.min(50, Math.max(h.length, ...rows.map(r => (r[i] || '').length)) + 2)
+        }));
+        XLSX.utils.book_append_sheet(wb, ws, 'Businesses');
+        XLSX.writeFile(wb, 'businesses.xlsx');
+    }
 }
 
 // ── Init ─────────────────────────────────────────────────
