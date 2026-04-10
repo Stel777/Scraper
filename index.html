@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scraper — Business Data Tool</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <link rel="stylesheet" href="static/css/style.css" />
+</head>
+<body>
+
+<!-- Full-screen map -->
+<div id="map"></div>
+
+<!-- Map type toggle -->
+<div id="map-type-toggle">
+    <button class="map-type-btn active" id="btn-map-street" onclick="setMapType('street')">Map</button>
+    <button class="map-type-btn" id="btn-map-satellite" onclick="setMapType('satellite')">Satellite</button>
+</div>
+
+<!-- Left Panel -->
+<div id="panel">
+
+    <!-- Header -->
+    <div class="panel-header">
+        <div class="logo">⚡ Scraper</div>
+        <div class="subtitle">Business data export tool</div>
+    </div>
+
+    <!-- Step Indicator -->
+    <div class="step-indicator">
+        <div class="step-item">
+            <div class="step-dot active" id="dot-1">1</div>
+            <span class="step-label">Area</span>
+        </div>
+        <div class="step-line" id="line-12"></div>
+        <div class="step-item">
+            <div class="step-dot" id="dot-2">2</div>
+            <span class="step-label">Filter</span>
+        </div>
+        <div class="step-line" id="line-23"></div>
+        <div class="step-item">
+            <div class="step-dot" id="dot-3">3</div>
+            <span class="step-label">Export</span>
+        </div>
+    </div>
+
+    <!-- ── Step 1: Area Selection ── -->
+    <div id="step-1" class="step-pane active">
+        <h2 class="step-title">Select an area</h2>
+
+        <div class="section">
+            <label class="input-label">Search by city or location</label>
+            <div class="input-row">
+                <input type="text" id="city-input" class="text-input"
+                       placeholder="e.g. Athens, Kolonaki, New York..."
+                       onkeydown="if(event.key==='Enter') geocodeCity()" />
+                <button class="icon-btn" onclick="geocodeCity()" title="Search">🔍</button>
+            </div>
+            <div id="geocode-results" class="suggestions"></div>
+        </div>
+
+        <div class="or-divider"><span>or draw on the map</span></div>
+
+        <div class="section">
+            <div class="draw-btn-group">
+                <button class="draw-btn" id="btn-polygon" onclick="activateDraw('polygon')">
+                    ⬡ Polygon
+                </button>
+                <button class="draw-btn" id="btn-rectangle" onclick="activateDraw('rectangle')">
+                    ▭ Rectangle
+                </button>
+                <button class="draw-btn danger hidden" id="btn-clear" onclick="clearArea()">
+                    ✕ Clear
+                </button>
+            </div>
+            <p class="hint">Click the map to draw your selection area.</p>
+        </div>
+
+        <div id="area-badge" class="badge success hidden">
+            ✓ <span id="area-badge-text">Area selected</span>
+        </div>
+
+        <div class="step-footer">
+            <button class="btn-primary" id="btn-next-1" onclick="goToStep(2)" disabled>
+                Next →
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Step 2: Business Type ── -->
+    <div id="step-2" class="step-pane">
+        <h2 class="step-title">What are you looking for?</h2>
+
+        <div class="section">
+            <input type="text" id="type-filter" class="text-input"
+                   placeholder="Filter types: gym, sushi, hotel..."
+                   oninput="filterTypes(this.value)" />
+        </div>
+
+        <div id="type-grid" class="type-grid"></div>
+
+        <div id="other-input-wrap" class="hidden">
+            <input type="text" id="other-input" class="text-input"
+                   placeholder="e.g. swimming_pool, tattoo, or amenity=theatre"
+                   oninput="onOtherInput(this.value)" />
+            <p class="hint">Type an OSM category or use <code>key=value</code> format for precision.</p>
+        </div>
+
+        <div id="type-badge" class="badge info hidden">
+            Selected: <strong id="type-badge-label"></strong>
+        </div>
+
+        <div id="search-loading" class="loading hidden">
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-info">
+                <span class="progress-label">Querying OpenStreetMap...</span>
+                <span id="progress-eta"></span>
+            </div>
+        </div>
+
+        <div id="search-error" class="badge error hidden"></div>
+
+        <div class="step-footer">
+            <button class="btn-secondary" onclick="goToStep(1)">← Back</button>
+            <button class="btn-primary" id="btn-search" onclick="searchBusinesses()" disabled>
+                Search
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Step 3: Results & Export ── -->
+    <div id="step-3" class="step-pane">
+        <h2 class="step-title">Results</h2>
+
+        <div id="results-summary" class="summary-card"></div>
+
+        <div class="section">
+            <div class="section-header">
+                <h3 class="section-title">Fields to export</h3>
+                <button class="link-btn" onclick="toggleAllFields(true)">All</button>
+                <span class="sep">·</span>
+                <button class="link-btn" onclick="toggleAllFields(false)">None</button>
+            </div>
+            <div id="fields-list" class="fields-list"></div>
+        </div>
+
+        <div class="section">
+            <h3 class="section-title">Export as</h3>
+            <div class="export-grid">
+                <button class="export-btn" onclick="exportData('csv')">
+                    <span class="export-icon">📄</span>
+                    <span class="export-label">CSV</span>
+                    <span class="export-size" id="size-csv"></span>
+                </button>
+                <button class="export-btn" onclick="exportData('xlsx')">
+                    <span class="export-icon">📊</span>
+                    <span class="export-label">Excel</span>
+                    <span class="export-size" id="size-xlsx"></span>
+                </button>
+                <button class="export-btn" onclick="exportData('txt')">
+                    <span class="export-icon">📝</span>
+                    <span class="export-label">TXT</span>
+                    <span class="export-size" id="size-txt"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-header">
+                <h3 class="section-title">Preview</h3>
+                <span id="preview-count" class="muted"></span>
+            </div>
+            <div class="table-wrap">
+                <table id="results-table">
+                    <thead id="results-thead"></thead>
+                    <tbody id="results-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="step-footer">
+            <button class="btn-secondary" onclick="goToStep(1)">← New Search</button>
+        </div>
+    </div>
+
+</div><!-- /panel -->
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="static/js/app.js"></script>
+</body>
+</html>
