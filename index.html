@@ -138,16 +138,6 @@
 
         <div id="results-summary" class="summary-card"></div>
 
-        <div id="enrich-section" class="section hidden">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                <button class="btn-secondary" id="btn-enrich" onclick="enrichMissingWebsites()">
-                    🔍 Fill Missing Data
-                </button>
-                <span id="enrich-status" class="muted" style="font-size:0.85rem"></span>
-            </div>
-            <p class="hint">Looks up each business individually to fill in missing website, phone, email, and hours.</p>
-        </div>
-
         <div class="section">
             <div class="section-header">
                 <h3 class="section-title">Fields to export</h3>
@@ -179,12 +169,13 @@
             </div>
         </div>
 
-        <div class="section">
+        <div class="section" id="preview-section">
             <div class="section-header">
                 <h3 class="section-title">Preview</h3>
                 <span id="preview-count" class="muted"></span>
+                <button class="link-btn" id="btn-fullscreen" onclick="toggleFullscreen()" style="margin-left:8px">Fullscreen</button>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap" id="preview-table-wrap">
                 <table id="results-table">
                     <thead id="results-thead"></thead>
                     <tbody id="results-tbody"></tbody>
@@ -192,7 +183,9 @@
             </div>
         </div>
 
+        <p id="enrich-status" class="muted hidden" style="font-size:12px"></p>
         <div class="step-footer">
+            <button class="btn-secondary hidden" id="btn-enrich" onclick="enrichMissingWebsites()" style="margin-right:auto">🔍 Fill Missing Data</button>
             <button class="btn-secondary" onclick="goToStep(1)">← New Search</button>
         </div>
     </div>

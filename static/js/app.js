@@ -651,16 +651,25 @@ function hasIncompleteData(b) {
 
 function updateEnrichButton() {
     const missing = state.businesses.filter(hasIncompleteData);
-    const section = document.getElementById('enrich-section');
-    const btn     = document.getElementById('btn-enrich');
+    const btn    = document.getElementById('btn-enrich');
+    const status = document.getElementById('enrich-status');
     if (missing.length > 0) {
-        section.classList.remove('hidden');
+        btn.classList.remove('hidden');
         btn.textContent = `🔍 Fill Missing Data (${missing.length})`;
         btn.disabled = false;
-        document.getElementById('enrich-status').textContent = '';
+        status.textContent = '';
+        status.classList.add('hidden');
     } else {
-        section.classList.add('hidden');
+        btn.classList.add('hidden');
     }
+}
+
+// ── Preview Fullscreen ───────────────────────────────────
+function toggleFullscreen() {
+    const section = document.getElementById('preview-section');
+    const btnFS   = document.getElementById('btn-fullscreen');
+    const isFS    = section.classList.toggle('fullscreen');
+    btnFS.textContent = isFS ? 'Minimize' : 'Fullscreen';
 }
 
 // ── Data Enrichment ───────────────────────────────────────
@@ -716,10 +725,12 @@ async function enrichMissingWebsites() {
     status.textContent = enriched > 0
         ? `✓ Filled data for ${enriched} business${enriched !== 1 ? 'es' : ''}!`
         : 'No new data found.';
+    status.classList.remove('hidden');
     btn.textContent = remaining.length > 0
         ? `🔍 Fill Missing Data (${remaining.length})`
         : '✓ All checked';
     btn.disabled = remaining.length === 0;
+    if (remaining.length === 0) btn.classList.add('hidden');
 
     renderTable();
     updateExportSizes();
