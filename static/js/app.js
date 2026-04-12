@@ -715,6 +715,49 @@ function updateTableCell(busIdx, field, value) {
     }
 }
 
+// ── Enrichment lookups ────────────────────────────────────
+
+// 1. Overpass: query by name within 50m radius — returns full OSM tags
+async function lookupOverpassByName(b) {
+    if (!b.name) return null;
+    const escaped = b.name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const query = `[out:json][timeout:10];
+(
+  node["name"="${escaped}"](around:50,${b.latitude},${b.longitude});
+  way["name"="${escaped}"](around:50,${b.latitude},${b.longitude});
+);
+out tags;`;
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+            const resp = await fetch(endpoint, {
+                method: 'POST', body: query,
+                signal: AbortSignal.timeout(12000),
+            });
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            if (data.elements?.length) return data.elements[0].tags || {};
+            return null; // got a response, just no match — don't try other endpoints
+        } catch { continue; }
+    }
+    return null;
+}
+
+// 2. DuckDuckGo Instant Answer — free, CORS-enabled, finds official website for known businesses
+async function lookupDuckDuckGo(b) {
+    if (!b.name) return null;
+    const q = [b.name, b.address].filter(Boolean).join(' ');
+    try {
+        const resp = await fetch(
+            `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&skip_disambig=1`,
+            { signal: AbortSignal.timeout(8000) }
+        );
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        // AbstractURL is the official site when DDG recognises the entity
+        return data.AbstractURL || null;
+    } catch { return null; }
+}
+
 // ── Data Enrichment ───────────────────────────────────────
 async function enrichMissingWebsites() {
     const missing = state.businesses.filter(hasIncompleteData);
@@ -729,24 +772,15 @@ async function enrichMissingWebsites() {
 
         setEnrichStatus(`Checking ${i + 1} of ${missing.length}…`);
 
-        // Show spinners for empty fields in the table row
         const emptyFields = ['website', 'phone', 'email', 'opening_hours'].filter(f => !b[f]);
         markCellsLoading(busIdx, emptyFields);
 
-        try {
-            const params = new URLSearchParams({
-                lat: b.latitude, lon: b.longitude,
-                format: 'jsonv2', extratags: 1, zoom: 18,
-            });
-            const resp = await fetch(
-                `https://nominatim.openstreetmap.org/reverse?${params}`,
-                { headers: { 'Accept-Language': 'en' } }
-            );
-            if (resp.ok) {
-                const data = await resp.json();
-                const tags = data.extratags || {};
-                let filledAny = false;
+        let filledAny = false;
 
+        // ── Source 1: Overpass name+radius ────────────────
+        try {
+            const tags = await lookupOverpassByName(b);
+            if (tags) {
                 const tryFill = (field, ...keys) => {
                     if (b[field]) return;
                     for (const k of keys) {
@@ -754,33 +788,42 @@ async function enrichMissingWebsites() {
                             b[field] = tags[k];
                             updateTableCell(busIdx, field, tags[k]);
                             filledAny = true;
-                            return;
+                            return true;
                         }
                     }
-                    // Clear spinner — nothing found for this field
-                    updateTableCell(busIdx, field, '');
                 };
-
-                tryFill('website',       'website',       'contact:website');
-                tryFill('phone',         'phone',         'contact:phone');
-                tryFill('email',         'email',         'contact:email');
+                tryFill('website',       'website', 'contact:website', 'url');
+                tryFill('phone',         'phone',   'contact:phone', 'telephone');
+                tryFill('email',         'email',   'contact:email');
                 tryFill('opening_hours', 'opening_hours');
-                if (filledAny) enriched++;
-            } else {
-                emptyFields.forEach(f => updateTableCell(busIdx, f, ''));
             }
-        } catch {
-            emptyFields.forEach(f => updateTableCell(busIdx, f, ''));
+        } catch {}
+
+        // ── Source 2: DuckDuckGo (website only if still missing) ──
+        if (!b.website) {
+            try {
+                const url = await lookupDuckDuckGo(b);
+                if (url) {
+                    b.website = url;
+                    updateTableCell(busIdx, 'website', url);
+                    filledAny = true;
+                }
+            } catch {}
         }
 
-        // Nominatim rate limit: 1 req/sec
-        if (i < missing.length - 1) await new Promise(r => setTimeout(r, 1100));
+        // Clear any remaining spinners for fields we couldn't fill
+        emptyFields.forEach(f => { if (!b[f]) updateTableCell(busIdx, f, ''); });
+
+        if (filledAny) enriched++;
+
+        // Small delay to be polite to APIs
+        if (i < missing.length - 1) await new Promise(r => setTimeout(r, 600));
     }
 
     const remaining = state.businesses.filter(hasIncompleteData);
     const summary = enriched > 0
         ? `✓ Filled data for ${enriched} business${enriched !== 1 ? 'es' : ''}!`
-        : 'No new data found.';
+        : 'No new data found in OpenStreetMap or web search.';
     setEnrichStatus(summary);
 
     if (remaining.length > 0) {
