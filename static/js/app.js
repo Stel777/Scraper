@@ -154,17 +154,23 @@ function buildOverpassQuery(businessKey, areaType, areaData, customValue) {
     const parts = [];
 
     if (businessKey === 'other') {
-        let tagPairs;
         if (customValue.includes('=')) {
             const idx = customValue.indexOf('=');
-            tagPairs = [[customValue.slice(0, idx).trim(), customValue.slice(idx + 1).trim()]];
-        } else {
-            const val = customValue.replace(/ /g, '_').toLowerCase();
-            tagPairs = [['amenity', val], ['shop', val], ['leisure', val], ['tourism', val]];
-        }
-        for (const [k, v] of tagPairs) {
+            const k = customValue.slice(0, idx).trim();
+            const v = customValue.slice(idx + 1).trim();
             parts.push(`node["${k}"="${v}"]${areaFilter};`);
             parts.push(`way["${k}"="${v}"]${areaFilter};`);
+        } else {
+            const val = customValue.replace(/ /g, '_').toLowerCase();
+            // Try common OSM key categories
+            for (const k of ['amenity', 'shop', 'leisure', 'tourism', 'man_made', 'highway', 'landuse', 'building', 'office', 'craft']) {
+                parts.push(`node["${k}"="${val}"]${areaFilter};`);
+                parts.push(`way["${k}"="${val}"]${areaFilter};`);
+            }
+            // Name-based fallback: finds anything whose OSM name contains the search term
+            const escaped = customValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[ _]');
+            parts.push(`node["name"~"${escaped}",i]${areaFilter};`);
+            parts.push(`way["name"~"${escaped}",i]${areaFilter};`);
         }
     } else {
         const bt = BUSINESS_TYPES_DATA[businessKey];
@@ -544,6 +550,7 @@ async function searchBusinesses() {
 
         // Try Overpass endpoints in order
         let overpassElements = [];
+        let overpassResponded = false;
         for (const endpoint of OVERPASS_ENDPOINTS) {
             try {
                 const resp = await fetch(endpoint, {
@@ -554,6 +561,7 @@ async function searchBusinesses() {
                 if (!resp.ok) continue;
                 const data = await resp.json();
                 overpassElements = data.elements || [];
+                overpassResponded = true;
                 break;
             } catch {
                 continue;
@@ -581,8 +589,14 @@ async function searchBusinesses() {
             if (!seen.has(k)) { seen.add(k); businesses.push(b); }
         }
 
-        if (businesses.length === 0 && overpassElements.length === 0) {
+        if (!overpassResponded) {
             errorDiv.textContent = 'All map data servers are currently busy. Please wait a moment and try again.';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+
+        if (businesses.length === 0) {
+            errorDiv.textContent = `No results found for "${state.customValue || ''}" in this area.`;
             errorDiv.classList.remove('hidden');
             return;
         }
