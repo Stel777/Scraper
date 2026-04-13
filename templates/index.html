@@ -26,6 +26,7 @@
     <div class="panel-header">
         <div class="logo">⚡ Scraper</div>
         <div class="subtitle">Business data export tool</div>
+        <button class="dark-toggle" id="dark-toggle" onclick="toggleDark()" title="Toggle dark mode">🌙</button>
     </div>
 
     <!-- Step Indicator -->
@@ -201,9 +202,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-<script>
-    const BUSINESS_TYPES_DATA = {{ business_types | tojson }};
-</script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
