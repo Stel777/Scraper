@@ -978,5 +978,19 @@ function exportData(format) {
     }
 }
 
+// ── Dark mode ─────────────────────────────────────────────
+function toggleDark() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const next = isDark ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    document.getElementById('dark-toggle').textContent = next === 'dark' ? '☀️' : '🌙';
+    localStorage.setItem('theme', next);
+}
+
 // ── Init ─────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', initMap);
+document.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', saved);
+    document.getElementById('dark-toggle').textContent = saved === 'dark' ? '☀️' : '🌙';
+    initMap();
+});
