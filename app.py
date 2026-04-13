@@ -1,9 +1,13 @@
 from flask import Flask, render_template, request, jsonify, send_file
 import requests
+import re
 import io
 import csv
 import openpyxl
 from openpyxl.styles import Font, PatternFill
+from urllib.parse import unquote, urljoin, urlparse
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
@@ -373,6 +377,125 @@ def export():
         )
 
     return jsonify({"error": "Invalid format"}), 400
+
+
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+SKIP_DOMAINS = [
+    "facebook.com", "instagram.com", "twitter.com", "x.com",
+    "linkedin.com", "youtube.com", "tiktok.com", "pinterest.com",
+    "yelp.com", "tripadvisor.com", "foursquare.com", "zomato.com",
+    "google.com", "maps.google", "wikipedia.org", "wikidata.org",
+    "booking.com", "expedia.com", "openstreetmap.org",
+    "duckduckgo.com", "bing.com", "yahoo.com",
+]
+
+FAKE_EMAIL_WORDS = [
+    "example", "domain", "email", "yourname", "user@", "sentry",
+    "schema", "wixpress", "squarespace", "wordpress", "cloudflare",
+    "noreply", "no-reply", "support@sentry", "privacy@",
+]
+
+
+def ddg_search_website(query):
+    """Search DuckDuckGo HTML and return the first non-social result URL."""
+    try:
+        resp = requests.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers=BROWSER_HEADERS,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        urls = re.findall(r'uddg=(https?[^&"]+)', resp.text)
+        for raw in urls:
+            url = unquote(raw)
+            if not any(s in url.lower() for s in SKIP_DOMAINS):
+                return url
+    except Exception:
+        pass
+    return ""
+
+
+def scrape_contact(url):
+    """Fetch a page and extract the first email and phone number found."""
+    try:
+        r = requests.get(url, headers=BROWSER_HEADERS, timeout=8, verify=False)
+        r.raise_for_status()
+        text = r.text[:80000]
+
+        emails = re.findall(
+            r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", text
+        )
+        emails = [
+            e for e in emails
+            if not any(w in e.lower() for w in FAKE_EMAIL_WORDS)
+            and len(e) < 80
+        ]
+
+        phones = re.findall(
+            r"(?:\+\d{1,3}[\s.\-]?)?(?:\(?\d{2,4}\)?[\s.\-]?){2,}\d{3,4}", text
+        )
+        phones = [
+            p.strip() for p in phones
+            if len(re.sub(r"\D", "", p)) >= 7
+        ]
+
+        return emails[0] if emails else "", phones[0] if phones else ""
+    except Exception:
+        return "", ""
+
+
+@app.route("/api/enrich", methods=["POST"])
+def enrich():
+    data     = request.json or {}
+    name     = data.get("name", "").strip()
+    address  = data.get("address", "").strip()
+    current  = data.get("current", {})   # fields already filled — skip re-fetching
+
+    if not name:
+        return jsonify({}), 400
+
+    result = {"website": "", "phone": "", "email": ""}
+
+    # ── Step 1: find the website ──────────────────────────
+    website = current.get("website", "")
+    if not website:
+        query   = f'"{name}" {address} official website'
+        website = ddg_search_website(query)
+        # Retry with just the name if nothing found
+        if not website:
+            website = ddg_search_website(f'"{name}" contact')
+        result["website"] = website
+
+    # ── Step 2: scrape website for email / phone ──────────
+    if website and (not current.get("email") or not current.get("phone")):
+        email, phone = scrape_contact(website)
+
+        # Try /contact and /contact-us if main page came up empty
+        if not email and not phone:
+            base = website.rstrip("/")
+            parsed = urlparse(base)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            for path in ["/contact", "/contact-us", "/about", "/about-us"]:
+                e, p = scrape_contact(origin + path)
+                if e or p:
+                    email, phone = e, p
+                    break
+
+        if not current.get("email"):
+            result["email"] = email
+        if not current.get("phone"):
+            result["phone"] = phone
+
+    return jsonify(result)
 
 
 if __name__ == "__main__":
