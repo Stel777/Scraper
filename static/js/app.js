@@ -161,16 +161,41 @@ function buildOverpassQuery(businessKey, areaType, areaData, customValue) {
             parts.push(`node["${k}"="${v}"]${areaFilter};`);
             parts.push(`way["${k}"="${v}"]${areaFilter};`);
         } else {
-            const val = customValue.replace(/ /g, '_').toLowerCase();
-            // Try common OSM key categories
-            for (const k of ['amenity', 'shop', 'leisure', 'tourism', 'man_made', 'highway', 'landuse', 'building', 'office', 'craft']) {
-                parts.push(`node["${k}"="${val}"]${areaFilter};`);
-                parts.push(`way["${k}"="${val}"]${areaFilter};`);
+            const val     = customValue.replace(/ /g, '_').toLowerCase();
+            const valSing = val.replace(/ches$/, 'ch').replace(/ses$/, 's').replace(/ies$/, 'y').replace(/s$/, '');
+            const OSM_KEYS = ['amenity','shop','leisure','tourism','man_made','highway','barrier',
+                              'landuse','building','office','craft','natural','emergency',
+                              'public_transport','historic','power','railway','aeroway','military'];
+
+            // 1. Exact value match across all common keys (both plural and singular)
+            const valuesToTry = [...new Set([val, valSing])];
+            for (const v of valuesToTry) {
+                for (const k of OSM_KEYS) {
+                    parts.push(`node["${k}"="${v}"]${areaFilter};`);
+                    parts.push(`way["${k}"="${v}"]${areaFilter};`);
+                }
             }
-            // Name-based fallback: finds anything whose OSM name contains the search term
-            const escaped = customValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[ _]');
-            parts.push(`node["name"~"${escaped}",i]${areaFilter};`);
-            parts.push(`way["name"~"${escaped}",i]${areaFilter};`);
+
+            // 2. Value regex — searches any of the major keys for a value matching the term.
+            //    This catches e.g. "speed_camera" when user types "traffic camera",
+            //    "surveillance" when user types "camera", "bench" for "benches", etc.
+            const keyRegex  = OSM_KEYS.join('|');
+            const valRegex  = val.replace(/_/g, '.?');        // traffic_camera → traffic.?camera
+            const wordRegex = customValue.trim().toLowerCase() // each word as fallback
+                .split(/\s+/).filter(w => w.length > 2)
+                .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+            parts.push(`node[~"${keyRegex}"~"${valRegex}",i]${areaFilter};`);
+            parts.push(`way[~"${keyRegex}"~"${valRegex}",i]${areaFilter};`);
+            if (wordRegex && wordRegex !== valRegex) {
+                parts.push(`node[~"${keyRegex}"~"${wordRegex}",i]${areaFilter};`);
+                parts.push(`way[~"${keyRegex}"~"${wordRegex}",i]${areaFilter};`);
+            }
+
+            // 3. Name-based fallback for named POIs (parks, venues, etc.)
+            const nameEsc = customValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[ _]');
+            parts.push(`node["name"~"${nameEsc}",i]${areaFilter};`);
+            parts.push(`way["name"~"${nameEsc}",i]${areaFilter};`);
         }
     } else {
         const bt = BUSINESS_TYPES_DATA[businessKey];
