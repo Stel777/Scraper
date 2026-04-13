@@ -266,7 +266,7 @@ async function searchNominatimPois(label, areaType, areaData) {
 // ── Map ─────────────────────────────────────────────────
 let map, drawnItems, bboxRect, polygonHandler, rectangleHandler;
 let resultMarkers = [];
-let streetLayer, satelliteLayer, currentMapType = 'street';
+let streetLayer, satelliteLayer, darkLayer, currentMapType = 'street';
 
 function initMap() {
     map = L.map('map').setView([37.97, 23.73], 12);
@@ -281,7 +281,13 @@ function initMap() {
         maxZoom: 19,
     });
 
-    streetLayer.addTo(map);
+    darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
+        maxZoom: 19,
+    });
+
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    (isDark ? darkLayer : streetLayer).addTo(map);
 
     drawnItems = new L.FeatureGroup().addTo(map);
 
@@ -309,15 +315,21 @@ function initMap() {
 }
 
 // ── Map type ─────────────────────────────────────────────
+function getBaseLayer() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    return isDark ? darkLayer : streetLayer;
+}
+
 function setMapType(type) {
     if (type === currentMapType) return;
     currentMapType = type;
     if (type === 'satellite') {
         map.removeLayer(streetLayer);
+        map.removeLayer(darkLayer);
         satelliteLayer.addTo(map);
     } else {
         map.removeLayer(satelliteLayer);
-        streetLayer.addTo(map);
+        getBaseLayer().addTo(map);
     }
     document.getElementById('btn-map-street').classList.toggle('active', type === 'street');
     document.getElementById('btn-map-satellite').classList.toggle('active', type === 'satellite');
@@ -1010,6 +1022,17 @@ function toggleDark() {
     document.documentElement.setAttribute('data-theme', next);
     document.getElementById('dark-toggle').textContent = next === 'dark' ? '☀️' : '🌙';
     localStorage.setItem('theme', next);
+
+    // Swap map tile only when not on satellite
+    if (currentMapType !== 'satellite' && map) {
+        if (next === 'dark') {
+            map.removeLayer(streetLayer);
+            darkLayer.addTo(map);
+        } else {
+            map.removeLayer(darkLayer);
+            streetLayer.addTo(map);
+        }
+    }
 }
 
 // ── Init ─────────────────────────────────────────────────
