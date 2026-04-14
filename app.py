@@ -515,88 +515,234 @@ def scrape_url(url):
     return email, phone, fb, ig
 
 
-def bing_rss_search(query, limit=6):
+NOM_HEADERS = {"User-Agent": "Scraper/1.0 (business-data-tool)"}
+
+
+def nominatim_lookup(name, lat, lon):
     """
-    Use Bing RSS feed — returns real result URLs without JS rendering.
-    Works reliably without getting blocked.
+    Use Nominatim bounded search near the known coordinates.
+    Returns dict of OSM extratags if found, else {}.
     """
     try:
         r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": name,
+                "format": "jsonv2",
+                "limit": 5,
+                "viewbox": f"{float(lon)-0.02},{float(lat)+0.02},{float(lon)+0.02},{float(lat)-0.02}",
+                "bounded": 1,
+                "extratags": 1,
+                "addressdetails": 0,
+            },
+            headers=NOM_HEADERS,
+            timeout=10,
+        )
+        if r.ok:
+            for res in r.json():
+                tags = res.get("extratags") or {}
+                if any(tags.get(k) for k in ["phone","website","email","contact:phone","contact:website"]):
+                    return tags
+            # Return first result's tags even if empty, for website field
+            results = r.json()
+            if results:
+                return results[0].get("extratags") or {}
+    except Exception:
+        pass
+    return {}
+
+
+def overpass_lookup(name, lat, lon):
+    """
+    Query Overpass for a node/way named `name` within 150m of coordinates.
+    Returns OSM tags dict or {}.
+    """
+    escaped = name.replace('"', '\\"')
+    query = (
+        f'[out:json][timeout:15];'
+        f'('
+        f'node["name"~"{escaped}",i](around:150,{lat},{lon});'
+        f'way["name"~"{escaped}",i](around:150,{lat},{lon});'
+        f');'
+        f'out tags;'
+    )
+    endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    ]
+    for ep in endpoints:
+        try:
+            r = requests.post(ep, data=query, timeout=18)
+            if r.ok and r.text.strip():
+                elements = r.json().get("elements", [])
+                for el in elements:
+                    tags = el.get("tags", {})
+                    if any(tags.get(k) for k in ["phone","website","email","contact:phone","contact:website"]):
+                        return tags
+                if elements:
+                    return elements[0].get("tags", {})
+            break
+        except Exception:
+            continue
+    return {}
+
+
+def extract_from_osm_tags(tags):
+    """Pull website, phone, email out of OSM tags dict."""
+    website = (tags.get("website") or tags.get("contact:website") or
+               tags.get("url") or "").strip()
+    phone   = (tags.get("phone") or tags.get("contact:phone") or
+               tags.get("telephone") or "").strip()
+    email   = (tags.get("email") or tags.get("contact:email") or "").strip()
+    return website, phone, email
+
+
+def bing_rss(query, limit=8):
+    """Bing RSS with forced en-US market to avoid geo-redirection."""
+    try:
+        r = requests.get(
             "https://www.bing.com/search",
-            params={"q": query, "format": "rss"},
+            params={"q": query, "format": "rss", "setlang": "en-US",
+                    "setmkt": "en-US", "cc": "US"},
             headers=BROWSER_HEADERS,
             timeout=12,
         )
         if not r.ok:
-            return []
-        urls = re.findall(r'<link>(https?://[^<]+)</link>', r.text)
-        # also pull phones/emails directly from RSS snippets
-        descs = " ".join(re.findall(r'<description>(.*?)</description>', r.text, re.DOTALL))
-        return urls, descs
+            return [], ""
+        items   = re.findall(r'<item>(.*?)</item>', r.text, re.DOTALL)
+        urls    = []
+        snippets = []
+        for item in items:
+            lm = re.search(r'<link>(https?://[^<]+)</link>', item)
+            dm = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
+            if lm:
+                urls.append(lm.group(1).strip())
+            if dm:
+                snippets.append(re.sub(r'<[^>]+>', ' ', dm.group(1)))
+        return urls[:limit], " ".join(snippets)
     except Exception:
         return [], ""
 
 
-def guess_domain_urls(name):
-    """Generate plausible website URLs from a business name."""
+def guess_domain_urls(name, address=""):
+    """Generate plausible website URLs from a business name + country TLD."""
     n = unicodedata.normalize("NFD", name.lower())
     n = "".join(c for c in n if unicodedata.category(c) != "Mn")
     n = re.sub(r"[^a-z0-9\s]", "", n).strip()
     slug      = re.sub(r"\s+", "", n)
     slug_dash = re.sub(r"\s+", "-", n)
-    tlds = [".com", ".net", ".org", ".gr", ".de", ".fr", ".es", ".it",
-            ".co.uk", ".eu", ".io"]
+
+    # Guess country TLD from address
+    country_tlds = {
+        "greece": ".gr", "athens": ".gr", "thessaloniki": ".gr",
+        "germany": ".de", "berlin": ".de", "munich": ".de",
+        "france": ".fr", "paris": ".fr",
+        "italy": ".it", "rome": ".it", "milan": ".it",
+        "spain": ".es", "madrid": ".es", "barcelona": ".es",
+        "netherlands": ".nl", "amsterdam": ".nl",
+        "belgium": ".be", "brussels": ".be",
+        "uk": ".co.uk", "london": ".co.uk", "england": ".co.uk",
+        "australia": ".com.au", "sydney": ".com.au",
+        "portugal": ".pt", "lisbon": ".pt",
+    }
+    extra_tlds = []
+    addr_lower = address.lower()
+    for keyword, tld in country_tlds.items():
+        if keyword in addr_lower:
+            extra_tlds.append(tld)
+
+    tlds = [".com", ".net", ".org", ".eu", ".io"] + extra_tlds
     out = []
     for t in tlds:
         out.append(f"https://www.{slug}{t}")
         if slug_dash != slug:
             out.append(f"https://www.{slug_dash}{t}")
+        out.append(f"https://{slug}{t}")
     return out
 
 
 def find_website_for_business(name, address):
-    """
-    Try multiple strategies to find the official website.
-    Returns (website_url, bing_snippets_text).
-    """
+    """Find official website via Bing RSS then domain guessing."""
     location = ", ".join(address.split(",")[:2]) if address else ""
-    queries  = [
+    queries = [
         f'"{name}" {location}',
         f'"{name}" {location} official website',
-        f'{name} {location} contact',
+        f'{name} {location} contact phone',
     ]
 
+    all_snippets = ""
     for query in queries:
-        urls, snippets = bing_rss_search(query, limit=8)
-        good = [u for u in urls if not any(s in u.lower() for s in SKIP_WEBSITE_DOMAINS)]
+        urls, snips = bing_rss(query, limit=10)
+        all_snippets += " " + snips
+        good = [u for u in urls
+                if not any(s in u.lower() for s in SKIP_WEBSITE_DOMAINS)]
         if good:
-            return good[0], snippets
+            return good[0], all_snippets
 
-    # Domain guessing as last resort
-    for url in guess_domain_urls(name):
+    # Domain guessing
+    for url in guess_domain_urls(name, address):
         html = fetch_html(url, timeout=6)
         if html:
-            return url, ""
+            return url, all_snippets
 
-    return "", ""
+    return "", all_snippets
 
 
-def find_social_urls_for_business(name, address):
-    """Search Bing RSS for the business's Facebook and Instagram pages."""
-    location = address.split(",")[0] if address else ""
-    fb = ig = ""
+def scrape_directory(url):
+    """Scrape a directory/aggregator page for phone + email only."""
+    html = fetch_html(url)
+    if not html:
+        return "", ""
+    email, phone = extract_contact(html)
+    return email, phone
 
-    urls_fb, _ = bing_rss_search(f'site:facebook.com "{name}" {location}', limit=4)
-    for u in urls_fb:
-        if "facebook.com" in u and "/sharer" not in u:
-            fb = u; break
 
-    urls_ig, _ = bing_rss_search(f'site:instagram.com "{name}" {location}', limit=4)
-    for u in urls_ig:
-        if "instagram.com" in u:
-            ig = u; break
+def find_on_directories(name, address):
+    """Search Bing for the business on TripAdvisor, Yelp, Foursquare, Facebook."""
+    location = ", ".join(address.split(",")[:2]) if address else ""
+    email = phone = fb_url = ig_url = ""
 
-    return fb, ig
+    dir_sites = [
+        "tripadvisor.com", "yelp.com", "foursquare.com",
+        "zomato.com", "happycow.net", "thefork.com",
+    ]
+    social_sites = ["facebook.com", "instagram.com"]
+
+    # Search all directory + social sites for this business
+    for site in dir_sites + social_sites:
+        if email and phone:
+            break
+        urls, snips = bing_rss(f'site:{site} "{name}" {location}', limit=3)
+        for url in urls:
+            if site not in url:
+                continue
+            if "facebook.com" in url:
+                if not fb_url and "/sharer" not in url and "/tr?" not in url:
+                    fb_url = url
+                    continue
+            if "instagram.com" in url:
+                if not ig_url:
+                    ig_url = url
+                    continue
+            # For directory sites scrape for phone/email
+            e, p = scrape_directory(url)
+            email = email or e
+            phone = phone or p
+            # Also check snippets for phones
+            if not phone:
+                sp = clean_phones(PHONE_RE.findall(snips))
+                phone = phone or (sp[0] if sp else "")
+
+    # Scrape social pages
+    for surl in filter(None, [fb_url, ig_url]):
+        if email and phone:
+            break
+        e, p = scrape_directory(surl)
+        email = email or e
+        phone = phone or p
+
+    return email, phone, fb_url, ig_url
 
 
 @app.route("/api/enrich", methods=["POST"])
@@ -604,6 +750,8 @@ def enrich():
     data    = request.json or {}
     name    = data.get("name", "").strip()
     address = data.get("address", "").strip()
+    lat     = data.get("lat", "")
+    lon     = data.get("lon", "")
     current = data.get("current", {})
 
     if not name:
@@ -616,25 +764,45 @@ def enrich():
     fb_url  = ig_url = ""
     snippets = ""
 
-    # ── 1. Find website via Bing RSS + domain guessing ────
+    # ── 1. Nominatim bounded search (uses known lat/lon) ──
+    #    Most reliable: directly queries OSM data by coordinates
+    if lat and lon and (not website or not phone or not email):
+        nom_tags = nominatim_lookup(name, lat, lon)
+        w, p, e  = extract_from_osm_tags(nom_tags)
+        website  = website or w
+        phone    = phone   or p
+        email    = email   or e
+
+    # ── 2. Overpass radius query (deeper OSM tag coverage) ─
+    if lat and lon and (not website or not phone or not email):
+        osm_tags = overpass_lookup(name, lat, lon)
+        w, p, e  = extract_from_osm_tags(osm_tags)
+        website  = website or w
+        phone    = phone   or p
+        email    = email   or e
+
+    # Update result with what we found so far
+    result["website"] = website
+
+    # ── 3. Find website via search + domain guessing ──────
     if not website:
         website, snippets = find_website_for_business(name, address)
         result["website"] = website
 
-    # ── 2. Scrape homepage ────────────────────────────────
+    # ── 4. Scrape the website homepage ───────────────────
     if website and (not email or not phone):
         e, p, fb, ig = scrape_url(website)
-        email   = email  or e
-        phone   = phone  or p
-        fb_url  = fb_url or fb
-        ig_url  = ig_url or ig
+        email  = email  or e
+        phone  = phone  or p
+        fb_url = fb_url or fb
+        ig_url = ig_url or ig
 
-    # ── 3. Scrape contact / about sub-pages ──────────────
+    # ── 5. Scrape contact/about sub-pages ────────────────
     if website and (not email or not phone):
         parsed = urlparse(website.rstrip("/"))
         origin = f"{parsed.scheme}://{parsed.netloc}"
         for path in ["/contact", "/contact-us", "/about", "/about-us",
-                     "/kontakt", "/info", "/reach-us", "/get-in-touch", "/impressum"]:
+                     "/kontakt", "/info", "/impressum", "/reach-us"]:
             if email and phone:
                 break
             e, p, fb2, ig2 = scrape_url(origin + path)
@@ -643,29 +811,25 @@ def enrich():
             fb_url = fb_url or fb2
             ig_url = ig_url or ig2
 
-    # ── 4. Try social media pages ─────────────────────────
+    # ── 6. Directories + social pages ────────────────────
     if not email or not phone:
-        if not fb_url and not ig_url:
-            fb_url, ig_url = find_social_urls_for_business(name, address)
-        for soc_url in filter(None, [fb_url, ig_url]):
-            if email and phone:
-                break
-            e, p, _, _ = scrape_url(soc_url)
-            email = email or e
-            phone = phone or p
+        de, dp, fb2, ig2 = find_on_directories(name, address)
+        email  = email  or de
+        phone  = phone  or dp
+        fb_url = fb_url or fb2
+        ig_url = ig_url or ig2
 
-    # ── 5. Extract from Bing search snippets ─────────────
+    for surl in filter(None, [fb_url, ig_url]):
+        if email and phone:
+            break
+        e, p, _, _ = scrape_url(surl)
+        email = email or e
+        phone = phone or p
+
+    # ── 7. Phone from search snippets ────────────────────
     if not phone and snippets:
         sp = clean_phones(PHONE_RE.findall(snippets))
-        if sp:
-            phone = sp[0]
-
-    if not phone:
-        # One more targeted Bing phone search
-        _, snip2 = bing_rss_search(f'"{name}" {address} phone number', limit=3)
-        sp2 = clean_phones(PHONE_RE.findall(snip2))
-        if sp2:
-            phone = sp2[0]
+        phone = phone or (sp[0] if sp else "")
 
     if not current.get("email"):
         result["email"] = email
