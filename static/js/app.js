@@ -790,6 +790,8 @@ async function enrichMissingWebsites() {
                 body:    JSON.stringify({
                     name:    b.name,
                     address: b.address,
+                    lat:     b.latitude,
+                    lon:     b.longitude,
                     current: { website: b.website, phone: b.phone, email: b.email },
                 }),
             });
