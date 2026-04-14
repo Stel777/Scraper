@@ -380,6 +380,8 @@ def export():
     return jsonify({"error": "Invalid format"}), 400
 
 
+import unicodedata
+
 BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -390,17 +392,13 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Domains to skip when looking for the official website
+# ── Constants ─────────────────────────────────────────────
 SKIP_WEBSITE_DOMAINS = [
     "google.com", "maps.google", "wikipedia.org", "wikidata.org",
     "openstreetmap.org", "duckduckgo.com", "bing.com", "yahoo.com",
     "booking.com", "expedia.com", "airbnb.com",
-    "yelp.com", "tripadvisor.com", "foursquare.com", "zomato.com", "trustpilot.com",
-    "yellowpages.com", "whitepages.com", "hotfrog.com",
-]
-
-# Social domains — kept separate so we can search them for contact info
-SOCIAL_DOMAINS = [
+    "yelp.com", "tripadvisor.com", "foursquare.com", "zomato.com",
+    "trustpilot.com", "yellowpages.com", "whitepages.com", "hotfrog.com",
     "facebook.com", "instagram.com", "twitter.com", "x.com",
     "linkedin.com", "youtube.com", "tiktok.com", "pinterest.com",
 ]
@@ -408,20 +406,16 @@ SOCIAL_DOMAINS = [
 FAKE_EMAIL_WORDS = [
     "example", "domain", "yourname", "sentry", "schema", "wixpress",
     "squarespace", "wordpress", "cloudflare", "noreply", "no-reply",
-    "webmaster", "postmaster", "mailer-daemon", "bounce", "@2x",
+    "webmaster", "postmaster", "mailer-daemon", "bounce",
     ".png", ".jpg", ".gif", ".svg", ".js", ".css",
 ]
 
 PHONE_RE = re.compile(
-    r"(?<!\d)"
-    r"(?:\+\d{1,3}[\s.\-]?)?"
-    r"(?:\(?\d{2,4}\)?[\s.\-]?){1,2}"
-    r"\d{3,4}[\s.\-]?\d{3,4}"
-    r"(?!\d)"
+    r"(?<!\d)(\+?[\d][\d\s.\-\(\)]{6,18}\d)(?!\d)"
 )
-
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
+# ── Helpers ───────────────────────────────────────────────
 
 def clean_phones(raw_list):
     out = []
@@ -443,21 +437,20 @@ def clean_emails(raw_list):
     return out
 
 
-def fetch(url, timeout=9):
-    """GET a URL, return (html, final_url) or (None, None) on failure."""
+def fetch_html(url, timeout=10):
     try:
         r = requests.get(url, headers=BROWSER_HEADERS, timeout=timeout,
                          verify=False, allow_redirects=True)
         if r.ok:
-            return r.text[:120000], r.url
+            return r.text[:150000]
     except Exception:
         pass
-    return None, None
+    return None
 
 
 def extract_jsonld(html):
-    """Pull phone / email / url out of JSON-LD structured data (most reliable)."""
-    phone, email, url = "", "", ""
+    """Extract phone/email from schema.org JSON-LD blocks."""
+    phone = email = ""
     for raw in re.findall(
         r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
         html, re.DOTALL | re.IGNORECASE
@@ -468,149 +461,141 @@ def extract_jsonld(html):
                 obj = obj[0] if obj else {}
             phone = phone or str(obj.get("telephone") or "").strip()
             email = email or str(obj.get("email") or "").strip()
-            url   = url   or str(obj.get("url") or "").strip()
-            # sameAs can be a list
-            if not url:
-                sa = obj.get("sameAs", "")
-                url = sa[0] if isinstance(sa, list) and sa else str(sa)
         except Exception:
             pass
-    return phone, email, url
+    return phone, email
 
 
-def extract_text_contact(html):
-    """Extract email + phone from visible text (strips tags first)."""
-    # Remove script / style blocks
-    clean = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    # Decode common HTML entities
-    clean = clean.replace("&#64;", "@").replace("%40", "@").replace("[at]", "@") \
-                 .replace("(at)", "@").replace(" AT ", "@")
-    # Decode tel: links
-    tel_links = re.findall(r'href=["\']tel:([^"\']+)["\']', clean, re.IGNORECASE)
-    mailto_links = re.findall(r'href=["\']mailto:([^"\'?]+)["\']', clean, re.IGNORECASE)
-    # Strip remaining tags
+def extract_contact(html):
+    """Extract email + phone from HTML via multiple strategies."""
+    # 1. JSON-LD (most reliable)
+    phone_jld, email_jld = extract_jsonld(html)
+
+    # 2. Explicit tel:/mailto: links
+    tel_hrefs    = re.findall(r'href=["\']tel:([^"\'>\s]+)["\']', html, re.IGNORECASE)
+    mailto_hrefs = re.findall(r'href=["\']mailto:([^"\'?>\s]+)["\']', html, re.IGNORECASE)
+
+    # 3. Text extraction — strip scripts/styles, decode obfuscation
+    clean = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html,
+                   flags=re.DOTALL | re.IGNORECASE)
+    for obf, rep in [("&#64;","@"),("%40","@"),("[at]","@"),("(at)","@"),(" AT ","@"),(" at ","@")]:
+        clean = clean.replace(obf, rep)
     plain = re.sub(r"<[^>]+>", " ", clean)
 
-    phones = clean_phones(tel_links + PHONE_RE.findall(plain))
-    emails = clean_emails(mailto_links + EMAIL_RE.findall(plain))
-    return emails[0] if emails else "", phones[0] if phones else ""
+    phones = clean_phones(tel_hrefs + PHONE_RE.findall(plain))
+    emails = clean_emails(mailto_hrefs + EMAIL_RE.findall(plain))
+
+    return (
+        email_jld or (emails[0] if emails else ""),
+        phone_jld or (phones[0] if phones else ""),
+    )
 
 
-def find_socials_on_page(html):
-    """Return facebook and instagram URLs found as links on a page."""
-    fb = re.search(r'href=["\']((https?://)?(?:www\.)?facebook\.com/(?!sharer|share|dialog)[^"\'?\s]+)["\']',
-                   html, re.IGNORECASE)
-    ig = re.search(r'href=["\']((https?://)?(?:www\.)?instagram\.com/[^"\'?\s]+)["\']',
-                   html, re.IGNORECASE)
-    def norm(m):
+def find_socials_in_html(html):
+    """Return (facebook_url, instagram_url) found as links on a page."""
+    def norm(pattern):
+        m = re.search(pattern, html, re.IGNORECASE)
         if not m:
             return ""
         u = m.group(1)
         return u if u.startswith("http") else "https://" + u
-    return norm(fb), norm(ig)
+
+    fb = norm(r'href=["\']((https?://)?(?:www\.)?facebook\.com/(?!sharer|share|dialog|tr\?)[^"\'?\s]+)["\']')
+    ig = norm(r'href=["\']((https?://)?(?:www\.)?instagram\.com/[^"\'?\s]+)["\']')
+    return fb, ig
 
 
-def scrape_page_full(url):
-    """Fetch url, extract (email, phone, fb_url, ig_url)."""
-    html, _ = fetch(url)
+def scrape_url(url):
+    """Fetch a URL and return (email, phone, fb_url, ig_url)."""
+    html = fetch_html(url)
     if not html:
         return "", "", "", ""
-    phone_jld, email_jld, _ = extract_jsonld(html)
-    email_txt, phone_txt    = extract_text_contact(html)
-    fb, ig                  = find_socials_on_page(html)
-    return (
-        email_jld or email_txt,
-        phone_jld or phone_txt,
-        fb, ig,
-    )
+    email, phone = extract_contact(html)
+    fb, ig       = find_socials_in_html(html)
+    return email, phone, fb, ig
 
 
-def scrape_social(url):
-    """Try to get email/phone from a social media page."""
-    html, _ = fetch(url)
-    if not html:
-        return "", ""
-    email, phone = extract_text_contact(html)
-    return email, phone
-
-
-def ddg_search(query, skip_social=True, limit=5):
-    """Return up to `limit` URLs from DuckDuckGo HTML."""
+def bing_rss_search(query, limit=6):
+    """
+    Use Bing RSS feed — returns real result URLs without JS rendering.
+    Works reliably without getting blocked.
+    """
     try:
-        resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query, "kl": "us-en"},
-            headers=BROWSER_HEADERS,
-            timeout=12,
-        )
-        if not resp.ok:
-            return []
-        skip = (SKIP_WEBSITE_DOMAINS + SOCIAL_DOMAINS) if skip_social else SKIP_WEBSITE_DOMAINS
-        results = []
-        for raw in re.findall(r'uddg=(https?[^&"]+)', resp.text):
-            url = unquote(raw)
-            if not any(s in url.lower() for s in skip):
-                results.append(url)
-                if len(results) >= limit:
-                    break
-        return results
-    except Exception:
-        return []
-
-
-def bing_search(query, skip_social=True, limit=5):
-    """Return up to `limit` URLs from Bing."""
-    try:
-        resp = requests.get(
+        r = requests.get(
             "https://www.bing.com/search",
-            params={"q": query},
+            params={"q": query, "format": "rss"},
             headers=BROWSER_HEADERS,
             timeout=12,
         )
-        if not resp.ok:
+        if not r.ok:
             return []
-        skip = (SKIP_WEBSITE_DOMAINS + SOCIAL_DOMAINS) if skip_social else SKIP_WEBSITE_DOMAINS
-        results = []
-        for url in re.findall(r'<a href="(https?://(?!www\.bing\.com)[^"]+)"', resp.text):
-            url = re.sub(r"[?&].*$", "", url) if "bing.com/ck" not in url else url
-            if not any(s in url.lower() for s in skip) and url not in results:
-                results.append(url)
-                if len(results) >= limit:
-                    break
-        return results
+        urls = re.findall(r'<link>(https?://[^<]+)</link>', r.text)
+        # also pull phones/emails directly from RSS snippets
+        descs = " ".join(re.findall(r'<description>(.*?)</description>', r.text, re.DOTALL))
+        return urls, descs
     except Exception:
-        return []
+        return [], ""
 
 
-def find_website(name, address):
-    """Multi-engine search to find a business's official website."""
-    location = address.split(",")[0] if address else ""
-    queries = [
-        f'"{name}" {location} official site',
+def guess_domain_urls(name):
+    """Generate plausible website URLs from a business name."""
+    n = unicodedata.normalize("NFD", name.lower())
+    n = "".join(c for c in n if unicodedata.category(c) != "Mn")
+    n = re.sub(r"[^a-z0-9\s]", "", n).strip()
+    slug      = re.sub(r"\s+", "", n)
+    slug_dash = re.sub(r"\s+", "-", n)
+    tlds = [".com", ".net", ".org", ".gr", ".de", ".fr", ".es", ".it",
+            ".co.uk", ".eu", ".io"]
+    out = []
+    for t in tlds:
+        out.append(f"https://www.{slug}{t}")
+        if slug_dash != slug:
+            out.append(f"https://www.{slug_dash}{t}")
+    return out
+
+
+def find_website_for_business(name, address):
+    """
+    Try multiple strategies to find the official website.
+    Returns (website_url, bing_snippets_text).
+    """
+    location = ", ".join(address.split(",")[:2]) if address else ""
+    queries  = [
         f'"{name}" {location}',
+        f'"{name}" {location} official website',
         f'{name} {location} contact',
     ]
+
     for query in queries:
-        urls = ddg_search(query, limit=3)
-        if urls:
-            return urls[0]
-    for query in queries:
-        urls = bing_search(query, limit=3)
-        if urls:
-            return urls[0]
-    return ""
+        urls, snippets = bing_rss_search(query, limit=8)
+        good = [u for u in urls if not any(s in u.lower() for s in SKIP_WEBSITE_DOMAINS)]
+        if good:
+            return good[0], snippets
+
+    # Domain guessing as last resort
+    for url in guess_domain_urls(name):
+        html = fetch_html(url, timeout=6)
+        if html:
+            return url, ""
+
+    return "", ""
 
 
-def find_social_pages(name, address):
-    """Search for the business's Facebook and Instagram pages."""
+def find_social_urls_for_business(name, address):
+    """Search Bing RSS for the business's Facebook and Instagram pages."""
     location = address.split(",")[0] if address else ""
-    fb, ig = "", ""
-    fb_results = ddg_search(f'site:facebook.com "{name}" {location}', skip_social=False, limit=1)
-    ig_results = ddg_search(f'site:instagram.com "{name}" {location}', skip_social=False, limit=1)
-    if fb_results and "facebook.com" in fb_results[0]:
-        fb = fb_results[0]
-    if ig_results and "instagram.com" in ig_results[0]:
-        ig = ig_results[0]
+    fb = ig = ""
+
+    urls_fb, _ = bing_rss_search(f'site:facebook.com "{name}" {location}', limit=4)
+    for u in urls_fb:
+        if "facebook.com" in u and "/sharer" not in u:
+            fb = u; break
+
+    urls_ig, _ = bing_rss_search(f'site:instagram.com "{name}" {location}', limit=4)
+    for u in urls_ig:
+        if "instagram.com" in u:
+            ig = u; break
+
     return fb, ig
 
 
@@ -628,62 +613,59 @@ def enrich():
     email   = current.get("email", "")
     phone   = current.get("phone", "")
     website = current.get("website", "")
-    fb_url  = ""
-    ig_url  = ""
+    fb_url  = ig_url = ""
+    snippets = ""
 
-    # ── 1. Find website ───────────────────────────────────
+    # ── 1. Find website via Bing RSS + domain guessing ────
     if not website:
-        website = find_website(name, address)
+        website, snippets = find_website_for_business(name, address)
         result["website"] = website
 
-    # ── 2. Scrape website (homepage + sub-pages) ──────────
+    # ── 2. Scrape homepage ────────────────────────────────
     if website and (not email or not phone):
-        e, p, fb, ig = scrape_page_full(website)
-        email   = email   or e
-        phone   = phone   or p
-        fb_url  = fb_url  or fb
-        ig_url  = ig_url  or ig
+        e, p, fb, ig = scrape_url(website)
+        email   = email  or e
+        phone   = phone  or p
+        fb_url  = fb_url or fb
+        ig_url  = ig_url or ig
 
-        if not email or not phone:
-            parsed = urlparse(website.rstrip("/"))
-            origin = f"{parsed.scheme}://{parsed.netloc}"
-            for path in ["/contact", "/contact-us", "/about", "/about-us",
-                         "/kontakt", "/info", "/reach-us", "/get-in-touch"]:
-                if email and phone:
-                    break
-                e, p, fb2, ig2 = scrape_page_full(origin + path)
-                email  = email  or e
-                phone  = phone  or p
-                fb_url = fb_url or fb2
-                ig_url = ig_url or ig2
-
-    # ── 3. Try social media pages ─────────────────────────
-    if not email or not phone:
-        if not fb_url or not ig_url:
-            fb_found, ig_found = find_social_pages(name, address)
-            fb_url = fb_url or fb_found
-            ig_url = ig_url or ig_found
-
-        for social_url in filter(None, [fb_url, ig_url]):
+    # ── 3. Scrape contact / about sub-pages ──────────────
+    if website and (not email or not phone):
+        parsed = urlparse(website.rstrip("/"))
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        for path in ["/contact", "/contact-us", "/about", "/about-us",
+                     "/kontakt", "/info", "/reach-us", "/get-in-touch", "/impressum"]:
             if email and phone:
                 break
-            se, sp = scrape_social(social_url)
-            email = email or se
-            phone = phone or sp
+            e, p, fb2, ig2 = scrape_url(origin + path)
+            email  = email  or e
+            phone  = phone  or p
+            fb_url = fb_url or fb2
+            ig_url = ig_url or ig2
 
-    # ── 4. Phone from search snippets (last resort) ───────
+    # ── 4. Try social media pages ─────────────────────────
+    if not email or not phone:
+        if not fb_url and not ig_url:
+            fb_url, ig_url = find_social_urls_for_business(name, address)
+        for soc_url in filter(None, [fb_url, ig_url]):
+            if email and phone:
+                break
+            e, p, _, _ = scrape_url(soc_url)
+            email = email or e
+            phone = phone or p
+
+    # ── 5. Extract from Bing search snippets ─────────────
+    if not phone and snippets:
+        sp = clean_phones(PHONE_RE.findall(snippets))
+        if sp:
+            phone = sp[0]
+
     if not phone:
-        try:
-            resp = requests.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": f'"{name}" {address} phone number', "kl": "us-en"},
-                headers=BROWSER_HEADERS, timeout=10,
-            )
-            snippet_phones = clean_phones(PHONE_RE.findall(resp.text))
-            if snippet_phones:
-                phone = snippet_phones[0]
-        except Exception:
-            pass
+        # One more targeted Bing phone search
+        _, snip2 = bing_rss_search(f'"{name}" {address} phone number', limit=3)
+        sp2 = clean_phones(PHONE_RE.findall(snip2))
+        if sp2:
+            phone = sp2[0]
 
     if not current.get("email"):
         result["email"] = email
