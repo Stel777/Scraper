@@ -4,11 +4,25 @@ import re
 import json
 import io
 import csv
+import sys
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from urllib.parse import unquote, urlparse
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ── Scrapling integration (browser-fingerprint fetcher) ───────────────────────
+sys.path.insert(0, r'C:\Users\steli\Documents\Claude_Stuff\Add-Ons\Scrapling')
+try:
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        from scrapling import Fetcher as _ScraplingFetcher
+        _fetcher = _ScraplingFetcher()
+    SCRAPLING_OK = True
+except Exception as _scrapling_err:
+    SCRAPLING_OK = False
+    _fetcher = None
 
 app = Flask(__name__)
 
@@ -437,7 +451,25 @@ def clean_emails(raw_list):
     return out
 
 
-def fetch_html(url, timeout=10):
+def fetch_page(url, timeout=10):
+    """
+    Fetch URL using Scrapling Fetcher (browser fingerprinting, bot evasion).
+    Returns the Scrapling Adaptor object on success, or None.
+    Falls back to plain requests if Scrapling is unavailable.
+    """
+    if SCRAPLING_OK and _fetcher is not None:
+        try:
+            page = _fetcher.get(url, timeout=timeout, stealthy_headers=True)
+            if page is not None:
+                return page
+        except Exception:
+            pass
+    # Fallback: wrap raw HTML in a fake object so callers get consistent interface
+    return _fetch_html_raw(url, timeout)
+
+
+def _fetch_html_raw(url, timeout=10):
+    """Plain requests fallback — returns raw HTML string or None."""
     try:
         r = requests.get(url, headers=BROWSER_HEADERS, timeout=timeout,
                          verify=False, allow_redirects=True)
@@ -448,8 +480,20 @@ def fetch_html(url, timeout=10):
     return None
 
 
+# Keep fetch_html as alias for backward compat with bing_rss / domain-guess callers
+def fetch_html(url, timeout=10):
+    result = fetch_page(url, timeout)
+    if result is None:
+        return None
+    # If it's already a string (requests fallback), return as-is
+    if isinstance(result, str):
+        return result
+    # Scrapling Response: get raw HTML
+    return _page_to_html(result) or None
+
+
 def extract_jsonld(html):
-    """Extract phone/email from schema.org JSON-LD blocks."""
+    """Extract phone/email from schema.org JSON-LD blocks (raw HTML string)."""
     phone = email = ""
     for raw in re.findall(
         r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -466,16 +510,13 @@ def extract_jsonld(html):
     return phone, email
 
 
-def extract_contact(html):
-    """Extract email + phone from HTML via multiple strategies."""
-    # 1. JSON-LD (most reliable)
+def _extract_contact_from_html(html):
+    """Extract email + phone from raw HTML string via regex."""
     phone_jld, email_jld = extract_jsonld(html)
 
-    # 2. Explicit tel:/mailto: links
     tel_hrefs    = re.findall(r'href=["\']tel:([^"\'>\s]+)["\']', html, re.IGNORECASE)
     mailto_hrefs = re.findall(r'href=["\']mailto:([^"\'?>\s]+)["\']', html, re.IGNORECASE)
 
-    # 3. Text extraction — strip scripts/styles, decode obfuscation
     clean = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html,
                    flags=re.DOTALL | re.IGNORECASE)
     for obf, rep in [("&#64;","@"),("%40","@"),("[at]","@"),("(at)","@"),(" AT ","@"),(" at ","@")]:
@@ -491,8 +532,117 @@ def extract_contact(html):
     )
 
 
-def find_socials_in_html(html):
-    """Return (facebook_url, instagram_url) found as links on a page."""
+def _extract_contact_with_scrapling(page):
+    """
+    Extract email + phone from a Scrapling Adaptor using CSS selectors.
+    Much more precise than regex: pulls actual tel:/mailto: hrefs directly.
+    """
+    phone_jld = email_jld = ""
+
+    # 1. JSON-LD via CSS selector
+    try:
+        for script in page.css('script[type="application/ld+json"]'):
+            try:
+                text = getattr(script, 'text', None) or getattr(script, 'get_all_text', lambda: "")()
+                obj  = json.loads(text.strip())
+                if isinstance(obj, list):
+                    obj = obj[0] if obj else {}
+                phone_jld = phone_jld or str(obj.get("telephone") or "").strip()
+                email_jld = email_jld or str(obj.get("email") or "").strip()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 2. tel: links via CSS selector
+    tel_hrefs = []
+    try:
+        for a in page.css('a[href^="tel:"]'):
+            href = ""
+            try:
+                href = a.attrib.get('href', '') if hasattr(a, 'attrib') else a['href']
+            except Exception:
+                try:
+                    href = str(a.get('href') or "")
+                except Exception:
+                    pass
+            val = href.replace('tel:', '').strip()
+            if val:
+                tel_hrefs.append(val)
+    except Exception:
+        pass
+
+    # 3. mailto: links via CSS selector
+    mailto_hrefs = []
+    try:
+        for a in page.css('a[href^="mailto:"]'):
+            href = ""
+            try:
+                href = a.attrib.get('href', '') if hasattr(a, 'attrib') else a['href']
+            except Exception:
+                try:
+                    href = str(a.get('href') or "")
+                except Exception:
+                    pass
+            val = href.replace('mailto:', '').split('?')[0].strip()
+            if val:
+                mailto_hrefs.append(val)
+    except Exception:
+        pass
+
+    # 4. Full text for regex fallback
+    try:
+        text = page.get_all_text() or ""
+    except Exception:
+        text = ""
+
+    phones = clean_phones(tel_hrefs + PHONE_RE.findall(text))
+    emails = clean_emails(mailto_hrefs + EMAIL_RE.findall(text))
+
+    return (
+        email_jld or (emails[0] if emails else ""),
+        phone_jld or (phones[0] if phones else ""),
+    )
+
+
+def extract_contact(page_or_html):
+    """Extract email + phone from a Scrapling Adaptor or raw HTML string."""
+    if isinstance(page_or_html, str):
+        return _extract_contact_from_html(page_or_html)
+    if page_or_html is None:
+        return "", ""
+    # Scrapling Adaptor
+    if SCRAPLING_OK:
+        try:
+            return _extract_contact_with_scrapling(page_or_html)
+        except Exception:
+            pass
+    # Fallback: get HTML string from adaptor
+    html = _page_to_html(page_or_html)
+    return _extract_contact_from_html(html) if html else ("", "")
+
+
+def _page_to_html(page):
+    """Convert a Scrapling Response to raw HTML string."""
+    try:
+        h = str(page.html_content or "")
+        if h:
+            return h[:150000]
+    except Exception:
+        pass
+    try:
+        h = page.body.decode(page.encoding or "utf-8", errors="replace")
+        return h[:150000]
+    except Exception:
+        pass
+    try:
+        return str(page)[:150000]
+    except Exception:
+        return ""
+
+
+def find_socials_in_html_str(html):
+    """Return (facebook_url, instagram_url) found as links in raw HTML."""
     def norm(pattern):
         m = re.search(pattern, html, re.IGNORECASE)
         if not m:
@@ -505,13 +655,54 @@ def find_socials_in_html(html):
     return fb, ig
 
 
+def find_socials(page_or_html):
+    """Return (facebook_url, instagram_url) from Scrapling Adaptor or raw HTML."""
+    fb = ig = ""
+    if not isinstance(page_or_html, str) and page_or_html is not None and SCRAPLING_OK:
+        # Use CSS selectors for precision
+        try:
+            for a in page_or_html.css('a[href*="facebook.com"]'):
+                try:
+                    href = a.attrib.get('href', '') if hasattr(a, 'attrib') else a['href']
+                except Exception:
+                    href = ""
+                if href and "/sharer" not in href and "/tr?" not in href and "/dialog/" not in href:
+                    fb = href if href.startswith("http") else "https://" + href
+                    break
+        except Exception:
+            pass
+        try:
+            for a in page_or_html.css('a[href*="instagram.com"]'):
+                try:
+                    href = a.attrib.get('href', '') if hasattr(a, 'attrib') else a['href']
+                except Exception:
+                    href = ""
+                if href:
+                    ig = href if href.startswith("http") else "https://" + href
+                    break
+        except Exception:
+            pass
+        if fb or ig:
+            return fb, ig
+        # Fallback to HTML string
+        html = _page_to_html(page_or_html)
+        return find_socials_in_html_str(html)
+
+    html = page_or_html if isinstance(page_or_html, str) else ""
+    return find_socials_in_html_str(html)
+
+
+# Keep old name as alias for any call sites that use it directly
+find_socials_in_html = find_socials_in_html_str
+
+
 def scrape_url(url):
-    """Fetch a URL and return (email, phone, fb_url, ig_url)."""
-    html = fetch_html(url)
-    if not html:
+    """Fetch a URL with Scrapling and return (email, phone, fb_url, ig_url)."""
+    page = fetch_page(url)
+    if page is None:
         return "", "", "", ""
-    email, phone = extract_contact(html)
-    fb, ig       = find_socials_in_html(html)
+    email, phone = extract_contact(page)
+    fb, ig       = find_socials(page)
     return email, phone, fb, ig
 
 
@@ -691,10 +882,10 @@ def find_website_for_business(name, address):
 
 def scrape_directory(url):
     """Scrape a directory/aggregator page for phone + email only."""
-    html = fetch_html(url)
-    if not html:
+    page = fetch_page(url)
+    if page is None:
         return "", ""
-    email, phone = extract_contact(html)
+    email, phone = extract_contact(page)
     return email, phone
 
 
